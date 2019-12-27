@@ -6,14 +6,11 @@
  */
 
 import invariant from 'shared/invariant';
-import warning from 'shared/warning';
 // TODO: We can remove this if we add invariantWithStack()
 // or add stack by default to invariants where possible.
 import ReactSharedInternals from 'shared/ReactSharedInternals';
 
 import voidElementTags from './voidElementTags';
-import {enableEventAPI} from 'shared/ReactFeatureFlags';
-import {REACT_EVENT_TARGET_TYPE} from 'shared/ReactSymbols';
 
 const HTML = '__html';
 
@@ -29,10 +26,7 @@ function assertValidProps(tag: string, props: ?Object) {
   // Note the use of `==` which checks for null or undefined.
   if (voidElementTags[tag]) {
     invariant(
-      (props.children == null ||
-        (enableEventAPI &&
-          props.children.type.$$typeof === REACT_EVENT_TARGET_TYPE)) &&
-        props.dangerouslySetInnerHTML == null,
+      props.children == null && props.dangerouslySetInnerHTML == null,
       '%s is a void element tag and must neither have `children` nor ' +
         'use `dangerouslySetInnerHTML`.%s',
       tag,
@@ -53,15 +47,18 @@ function assertValidProps(tag: string, props: ?Object) {
     );
   }
   if (__DEV__) {
-    warning(
-      props.suppressContentEditableWarning ||
-        !props.contentEditable ||
-        props.children == null,
-      'A component is `contentEditable` and contains `children` managed by ' +
-        'React. It is now your responsibility to guarantee that none of ' +
-        'those nodes are unexpectedly modified or duplicated. This is ' +
-        'probably not intentional.',
-    );
+    if (
+      !props.suppressContentEditableWarning &&
+      props.contentEditable &&
+      props.children != null
+    ) {
+      console.error(
+        'A component is `contentEditable` and contains `children` managed by ' +
+          'React. It is now your responsibility to guarantee that none of ' +
+          'those nodes are unexpectedly modified or duplicated. This is ' +
+          'probably not intentional.',
+      );
+    }
   }
   invariant(
     props.style == null || typeof props.style === 'object',

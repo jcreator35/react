@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,90 +8,115 @@
  */
 
 import typeof * as FeatureFlagsType from 'shared/ReactFeatureFlags';
-import typeof * as FeatureFlagsShimType from './ReactFeatureFlags.www';
+import typeof * as ExportsType from './ReactFeatureFlags.www';
+import typeof * as DynamicFeatureFlags from './ReactFeatureFlags.www-dynamic';
 
 // Re-export dynamic flags from the www version.
-export const {
-  debugRenderPhaseSideEffectsForStrictMode,
-  disableInputAttributeSyncing,
-  enableTrustedTypesIntegration,
-  enableSelectiveHydration,
-  enableTrainModelFix,
-} = require('ReactFeatureFlags');
+const dynamicFeatureFlags: DynamicFeatureFlags = require('ReactFeatureFlags');
 
-// In www, we have experimental support for gathering data
-// from User Timing API calls in production. By default, we
-// only emit performance.mark/measure calls in __DEV__. But if
-// somebody calls addUserTimingListener() which is exposed as an
-// experimental FB-only export, we call performance.mark/measure
-// as long as there is more than a single listener.
-export let enableUserTimingAPI = __DEV__;
+export const {
+  alwaysThrottleRetries,
+  disableDefaultPropsExceptForClasses,
+  disableLegacyContextForFunctionComponents,
+  disableSchedulerTimeoutInWorkLoop,
+  enableDO_NOT_USE_disableStrictPassiveEffect,
+  enableHiddenSubtreeInsertionEffectCleanup,
+  enableInfiniteRenderLoopDetection,
+  enableNoCloningMemoCache,
+  enableObjectFiber,
+  enableRenderableContext,
+  enableRetryLaneExpiration,
+  enableTransitionTracing,
+  enableTrustedTypesIntegration,
+  favorSafetyOverHydrationPerf,
+  renameElementSymbol,
+  retryLaneExpirationMs,
+  syncLaneExpirationMs,
+  transitionLaneExpirationMs,
+  enableFastAddPropertiesInDiffing,
+  enableViewTransition,
+  enableComponentPerformanceTrack,
+  enableScrollEndPolyfill,
+  enableFragmentRefs,
+} = dynamicFeatureFlags;
+
+// On WWW, __EXPERIMENTAL__ is used for a new modern build.
+// It's not used anywhere in production yet.
 
 export const enableProfilerTimer = __PROFILE__;
-export const enableSchedulerTracing = __PROFILE__;
-export const enableSchedulerDebugging = true;
+export const enableProfilerCommitHooks = __PROFILE__;
+export const enableProfilerNestedUpdatePhase = __PROFILE__;
+export const enableUpdaterTracking = __PROFILE__;
 
-export const replayFailedUnitOfWorkWithInvokeGuardedCallback = false;
-export const warnAboutDeprecatedLifecycles = true;
-export const warnAboutShorthandPropertyCollision = false;
-export const disableLegacyContext = false;
-export const warnAboutStringRefs = false;
-export const warnAboutDefaultPropsOnFunctionComponents = false;
-export const disableSchedulerTimeoutBasedOnReactExpirationTime = false;
+export const enableSuspenseAvoidThisFallback = true;
 
-export const exposeConcurrentModeAPIs = __EXPERIMENTAL__;
+export const enableCPUSuspense = true;
+export const enableUseEffectEventHook = true;
+export const enableMoveBefore = false;
+export const disableInputAttributeSyncing = false;
+export const enableLegacyFBSupport = true;
 
-export const enableSuspenseServerRenderer = true;
+export const enableYieldingBeforePassive = false;
 
-export const enableChunksAPI = __EXPERIMENTAL__;
+export const enableThrottledScheduling = false;
 
-export const disableJavaScriptURLs = true;
+export const enableHydrationLaneScheduling = true;
 
-let refCount = 0;
-export function addUserTimingListener() {
-  if (__DEV__) {
-    // Noop.
-    return () => {};
-  }
-  refCount++;
-  updateFlagOutsideOfReactCallStack();
-  return () => {
-    refCount--;
-    updateFlagOutsideOfReactCallStack();
-  };
-}
+// Logs additional User Timing API marks for use with an experimental profiling tool.
+export const enableSchedulingProfiler: boolean =
+  __PROFILE__ && dynamicFeatureFlags.enableSchedulingProfiler;
 
-// The flag is intentionally updated in a timeout.
-// We don't support toggling it during reconciliation or
-// commit since that would cause mismatching user timing API calls.
-let timeout = null;
-function updateFlagOutsideOfReactCallStack() {
-  if (!timeout) {
-    timeout = setTimeout(() => {
-      timeout = null;
-      enableUserTimingAPI = refCount > 0;
-    });
-  }
-}
+export const disableLegacyContext = __EXPERIMENTAL__;
 
-export const enableDeprecatedFlareAPI = true;
+export const enableLegacyCache = true;
 
-export const enableFundamentalAPI = false;
+export const enableAsyncIterableChildren = false;
+
+export const enableTaint = false;
+
+export const enablePostpone = false;
+
+export const enableHalt = false;
+
+// TODO: www currently relies on this feature. It's disabled in open source.
+// Need to remove it.
+export const disableCommentsAsDOMContainers = false;
+
+export const enableCreateEventHandleAPI = true;
 
 export const enableScopeAPI = true;
 
-export const enableJSXTransformAPI = true;
-
-export const warnAboutUnmockedScheduler = true;
-
 export const enableSuspenseCallback = true;
 
-export const flushSuspenseFallbacksInTests = true;
+export const enableLegacyHidden = true;
 
-export const enableNativeTargetAsInstance = false;
+export const disableTextareaChildren = __EXPERIMENTAL__;
+
+export const enableFizzExternalRuntime = true;
+
+export const passChildrenWhenCloningPersistedNodes = false;
+
+export const enablePersistedModeClonedFlag = false;
+
+export const enableAsyncDebugInfo = false;
+export const disableClientCache = true;
+
+export const enableReactTestRendererWarning = false;
+
+export const disableLegacyMode = true;
+
+export const enableShallowPropDiffing = false;
+
+export const enableLazyPublicInstanceInFabric = false;
+
+export const enableGestureTransition = false;
+
+export const enableSuspenseyImages = false;
+export const enableSrcObject = false;
+export const enableHydrationChangeEvent = false;
+export const enableDefaultTransitionIndicator = false;
+
+export const ownerStackLimit = 1e4;
 
 // Flow magic to verify the exports of this file match the original version.
-// eslint-disable-next-line no-unused-vars
-type Check<_X, Y: _X, X: Y = _X> = null;
-// eslint-disable-next-line no-unused-expressions
-(null: Check<FeatureFlagsShimType, FeatureFlagsType>);
+((((null: any): ExportsType): FeatureFlagsType): ExportsType);

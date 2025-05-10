@@ -1,7 +1,12 @@
 import React from 'react';
-import {createRoot} from 'react-dom';
+import {Profiler} from 'react';
+import {hydrateRoot} from 'react-dom/client';
 
 import App from './components/App';
 
-let root = createRoot(document, {hydrate: true});
-root.render(<App assets={window.assetManifest} />);
+hydrateRoot(
+  document,
+  <Profiler id="root">
+    <App assets={window.assetManifest} />
+  </Profiler>
+);

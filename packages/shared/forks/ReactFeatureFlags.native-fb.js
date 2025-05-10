@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,52 +7,85 @@
  * @flow
  */
 
-import invariant from 'shared/invariant';
-
 import typeof * as FeatureFlagsType from 'shared/ReactFeatureFlags';
-import typeof * as FeatureFlagsShimType from './ReactFeatureFlags.native-fb';
+import typeof * as ExportsType from './ReactFeatureFlags.native-fb';
+import typeof * as DynamicExportsType from './ReactFeatureFlags.native-fb-dynamic';
 
-// Uncomment to re-export dynamic flags from the fbsource version.
+// Re-export dynamic flags from the internal module.
+// Intentionally using * because this import is compiled to a `require` call.
+import * as dynamicFlagsUntyped from 'ReactNativeInternalFeatureFlags';
+const dynamicFlags: DynamicExportsType = (dynamicFlagsUntyped: any);
+
+// We destructure each value before re-exporting to avoid a dynamic look-up on
+// the exports object every time a flag is read.
 export const {
-  enableNativeTargetAsInstance,
-} = require('../shims/ReactFeatureFlags');
+  alwaysThrottleRetries,
+  enableHiddenSubtreeInsertionEffectCleanup,
+  enableObjectFiber,
+  enablePersistedModeClonedFlag,
+  enableShallowPropDiffing,
+  passChildrenWhenCloningPersistedNodes,
+  enableFastAddPropertiesInDiffing,
+  enableLazyPublicInstanceInFabric,
+  renameElementSymbol,
+  enableFragmentRefs,
+} = dynamicFlags;
 
 // The rest of the flags are static for better dead code elimination.
-export const enableUserTimingAPI = __DEV__;
-export const enableProfilerTimer = __PROFILE__;
-export const enableSchedulerTracing = __PROFILE__;
-export const enableSuspenseServerRenderer = false;
-export const enableSelectiveHydration = false;
-export const enableChunksAPI = false;
-export const exposeConcurrentModeAPIs = __EXPERIMENTAL__;
-export const warnAboutShorthandPropertyCollision = false;
-export const enableSchedulerDebugging = false;
-export const debugRenderPhaseSideEffectsForStrictMode = true;
-export const disableJavaScriptURLs = false;
+export const disableClientCache = true;
+export const disableCommentsAsDOMContainers = true;
+export const disableDefaultPropsExceptForClasses = true;
 export const disableInputAttributeSyncing = false;
-export const replayFailedUnitOfWorkWithInvokeGuardedCallback = __DEV__;
-export const warnAboutDeprecatedLifecycles = true;
-export const enableDeprecatedFlareAPI = false;
-export const enableFundamentalAPI = false;
-export const enableScopeAPI = false;
-export const enableJSXTransformAPI = false;
-export const warnAboutUnmockedScheduler = true;
-export const flushSuspenseFallbacksInTests = true;
-export const enableSuspenseCallback = false;
-export const warnAboutDefaultPropsOnFunctionComponents = false;
-export const warnAboutStringRefs = false;
 export const disableLegacyContext = false;
-export const disableSchedulerTimeoutBasedOnReactExpirationTime = false;
-export const enableTrainModelFix = false;
+export const disableLegacyContextForFunctionComponents = false;
+export const disableLegacyMode = false;
+export const disableSchedulerTimeoutInWorkLoop = false;
+export const disableTextareaChildren = false;
+export const enableAsyncDebugInfo = false;
+export const enableAsyncIterableChildren = false;
+export const enableCPUSuspense = true;
+export const enableCreateEventHandleAPI = false;
+export const enableDO_NOT_USE_disableStrictPassiveEffect = false;
+export const enableMoveBefore = true;
+export const enableFizzExternalRuntime = true;
+export const enableHalt = false;
+export const enableInfiniteRenderLoopDetection = false;
+export const enableLegacyCache = false;
+export const enableLegacyFBSupport = false;
+export const enableLegacyHidden = false;
+export const enableNoCloningMemoCache = false;
+export const enablePostpone = false;
+export const enableProfilerCommitHooks = __PROFILE__;
+export const enableProfilerNestedUpdatePhase = __PROFILE__;
+export const enableProfilerTimer = __PROFILE__;
+export const enableReactTestRendererWarning = false;
+export const enableRenderableContext = true;
+export const enableRetryLaneExpiration = false;
+export const enableSchedulingProfiler = __PROFILE__;
+export const enableComponentPerformanceTrack = false;
+export const enableScopeAPI = false;
+export const enableSuspenseAvoidThisFallback = false;
+export const enableSuspenseCallback = true;
+export const enableTaint = true;
+export const enableTransitionTracing = false;
 export const enableTrustedTypesIntegration = false;
-
-// Only used in www builds.
-export function addUserTimingListener() {
-  invariant(false, 'Not implemented.');
-}
+export const enableUpdaterTracking = __PROFILE__;
+export const enableUseEffectEventHook = false;
+export const favorSafetyOverHydrationPerf = true;
+export const retryLaneExpirationMs = 5000;
+export const syncLaneExpirationMs = 250;
+export const transitionLaneExpirationMs = 5000;
+export const enableHydrationLaneScheduling = true;
+export const enableYieldingBeforePassive = false;
+export const enableThrottledScheduling = false;
+export const enableViewTransition = false;
+export const enableGestureTransition = false;
+export const enableScrollEndPolyfill = true;
+export const enableSuspenseyImages = false;
+export const enableSrcObject = false;
+export const enableHydrationChangeEvent = true;
+export const enableDefaultTransitionIndicator = false;
+export const ownerStackLimit = 1e4;
 
 // Flow magic to verify the exports of this file match the original version.
-// eslint-disable-next-line no-unused-vars
-type Check<_X, Y: _X, X: Y = _X> = null;
-// eslint-disable-next-line no-unused-expressions
-(null: Check<FeatureFlagsShimType, FeatureFlagsType>);
+((((null: any): ExportsType): FeatureFlagsType): ExportsType);

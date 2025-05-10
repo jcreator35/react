@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,44 +7,42 @@
  * @flow
  */
 
+/* eslint-disable react-internal/prod-error-codes */
+
 import type {ReactElement} from 'shared/ReactElementType';
-import type {Fiber} from './ReactFiber';
-import type {FiberRoot} from './ReactFiberRoot';
-import type {Instance} from './ReactFiberHostConfig';
+import type {Fiber, FiberRoot} from './ReactInternalTypes';
 import type {ReactNodeList} from 'shared/ReactTypes';
 
 import {
-  flushSync,
-  scheduleWork,
-  flushPassiveEffects,
+  flushSyncWork,
+  scheduleUpdateOnFiber,
+  flushPendingEffects,
 } from './ReactFiberWorkLoop';
-import {updateContainer, syncUpdates} from './ReactFiberReconciler';
+import {enqueueConcurrentRenderForLane} from './ReactFiberConcurrentUpdates';
+import {updateContainerSync} from './ReactFiberReconciler';
 import {emptyContextObject} from './ReactFiberContext';
-import {Sync} from './ReactFiberExpirationTime';
+import {SyncLane} from './ReactFiberLane';
 import {
   ClassComponent,
   FunctionComponent,
   ForwardRef,
-  HostComponent,
-  HostPortal,
-  HostRoot,
   MemoComponent,
   SimpleMemoComponent,
-} from 'shared/ReactWorkTags';
+} from './ReactWorkTags';
 import {
   REACT_FORWARD_REF_TYPE,
   REACT_MEMO_TYPE,
   REACT_LAZY_TYPE,
 } from 'shared/ReactSymbols';
 
-export type Family = {|
+export type Family = {
   current: any,
-|};
+};
 
-export type RefreshUpdate = {|
+export type RefreshUpdate = {
   staleFamilies: Set<Family>,
   updatedFamilies: Set<Family>,
-|};
+};
 
 // Resolves type to a family.
 type RefreshHandler = any => Family | void;
@@ -53,16 +51,11 @@ type RefreshHandler = any => Family | void;
 export type SetRefreshHandler = (handler: RefreshHandler | null) => void;
 export type ScheduleRefresh = (root: FiberRoot, update: RefreshUpdate) => void;
 export type ScheduleRoot = (root: FiberRoot, element: ReactNodeList) => void;
-export type FindHostInstancesForRefresh = (
-  root: FiberRoot,
-  families: Array<Family>,
-) => Set<Instance>;
 
 let resolveFamily: RefreshHandler | null = null;
-// $FlowFixMe Flow gets confused by a WeakSet feature check below.
 let failedBoundaries: WeakSet<Fiber> | null = null;
 
-export let setRefreshHandler = (handler: RefreshHandler | null): void => {
+export const setRefreshHandler = (handler: RefreshHandler | null): void => {
   if (__DEV__) {
     resolveFamily = handler;
   }
@@ -74,7 +67,7 @@ export function resolveFunctionForHotReloading(type: any): any {
       // Hot reloading is disabled.
       return type;
     }
-    let family = resolveFamily(type);
+    const family = resolveFamily(type);
     if (family === undefined) {
       return type;
     }
@@ -96,7 +89,7 @@ export function resolveForwardRefForHotReloading(type: any): any {
       // Hot reloading is disabled.
       return type;
     }
-    let family = resolveFamily(type);
+    const family = resolveFamily(type);
     if (family === undefined) {
       // Check if we're dealing with a real forwardRef. Don't want to crash early.
       if (
@@ -199,6 +192,7 @@ export function isCompatibleFamilyForHotReloading(
       // then we would risk falsely saying two separate memo(Foo)
       // calls are equivalent because they wrap the same Foo function.
       const prevFamily = resolveFamily(prevType);
+      // $FlowFixMe[not-a-function] found when upgrading Flow
       if (prevFamily !== undefined && prevFamily === resolveFamily(nextType)) {
         return true;
       }
@@ -225,7 +219,7 @@ export function markFailedErrorBoundaryForHotReloading(fiber: Fiber) {
   }
 }
 
-export let scheduleRefresh: ScheduleRefresh = (
+export const scheduleRefresh: ScheduleRefresh = (
   root: FiberRoot,
   update: RefreshUpdate,
 ): void => {
@@ -235,18 +229,17 @@ export let scheduleRefresh: ScheduleRefresh = (
       return;
     }
     const {staleFamilies, updatedFamilies} = update;
-    flushPassiveEffects();
-    flushSync(() => {
-      scheduleFibersWithFamiliesRecursively(
-        root.current,
-        updatedFamilies,
-        staleFamilies,
-      );
-    });
+    flushPendingEffects();
+    scheduleFibersWithFamiliesRecursively(
+      root.current,
+      updatedFamilies,
+      staleFamilies,
+    );
+    flushSyncWork();
   }
 };
 
-export let scheduleRoot: ScheduleRoot = (
+export const scheduleRoot: ScheduleRoot = (
   root: FiberRoot,
   element: ReactNodeList,
 ): void => {
@@ -257,10 +250,8 @@ export let scheduleRoot: ScheduleRoot = (
       // Just ignore. We'll delete this with _renderSubtree code path later.
       return;
     }
-    flushPassiveEffects();
-    syncUpdates(() => {
-      updateContainer(element, root, null, null);
-    });
+    updateContainerSync(element, root, null, null);
+    flushSyncWork();
   }
 };
 
@@ -268,7 +259,7 @@ function scheduleFibersWithFamiliesRecursively(
   fiber: Fiber,
   updatedFamilies: Set<Family>,
   staleFamilies: Set<Family>,
-) {
+): void {
   if (__DEV__) {
     const {alternate, child, sibling, tag, type} = fiber;
 
@@ -309,6 +300,7 @@ function scheduleFibersWithFamiliesRecursively(
     if (failedBoundaries !== null) {
       if (
         failedBoundaries.has(fiber) ||
+        // $FlowFixMe[incompatible-use] found when upgrading Flow
         (alternate !== null && failedBoundaries.has(alternate))
       ) {
         needsRemount = true;
@@ -319,7 +311,10 @@ function scheduleFibersWithFamiliesRecursively(
       fiber._debugNeedsRemount = true;
     }
     if (needsRemount || needsRender) {
-      scheduleWork(fiber, Sync);
+      const root = enqueueConcurrentRenderForLane(fiber, SyncLane);
+      if (root !== null) {
+        scheduleUpdateOnFiber(root, fiber, SyncLane);
+      }
     }
     if (child !== null && !needsRemount) {
       scheduleFibersWithFamiliesRecursively(
@@ -336,147 +331,4 @@ function scheduleFibersWithFamiliesRecursively(
       );
     }
   }
-}
-
-export let findHostInstancesForRefresh: FindHostInstancesForRefresh = (
-  root: FiberRoot,
-  families: Array<Family>,
-): Set<Instance> => {
-  if (__DEV__) {
-    const hostInstances = new Set();
-    const types = new Set(families.map(family => family.current));
-    findHostInstancesForMatchingFibersRecursively(
-      root.current,
-      types,
-      hostInstances,
-    );
-    return hostInstances;
-  } else {
-    throw new Error(
-      'Did not expect findHostInstancesForRefresh to be called in production.',
-    );
-  }
-};
-
-function findHostInstancesForMatchingFibersRecursively(
-  fiber: Fiber,
-  types: Set<any>,
-  hostInstances: Set<Instance>,
-) {
-  if (__DEV__) {
-    const {child, sibling, tag, type} = fiber;
-
-    let candidateType = null;
-    switch (tag) {
-      case FunctionComponent:
-      case SimpleMemoComponent:
-      case ClassComponent:
-        candidateType = type;
-        break;
-      case ForwardRef:
-        candidateType = type.render;
-        break;
-      default:
-        break;
-    }
-
-    let didMatch = false;
-    if (candidateType !== null) {
-      if (types.has(candidateType)) {
-        didMatch = true;
-      }
-    }
-
-    if (didMatch) {
-      // We have a match. This only drills down to the closest host components.
-      // There's no need to search deeper because for the purpose of giving
-      // visual feedback, "flashing" outermost parent rectangles is sufficient.
-      findHostInstancesForFiberShallowly(fiber, hostInstances);
-    } else {
-      // If there's no match, maybe there will be one further down in the child tree.
-      if (child !== null) {
-        findHostInstancesForMatchingFibersRecursively(
-          child,
-          types,
-          hostInstances,
-        );
-      }
-    }
-
-    if (sibling !== null) {
-      findHostInstancesForMatchingFibersRecursively(
-        sibling,
-        types,
-        hostInstances,
-      );
-    }
-  }
-}
-
-function findHostInstancesForFiberShallowly(
-  fiber: Fiber,
-  hostInstances: Set<Instance>,
-): void {
-  if (__DEV__) {
-    const foundHostInstances = findChildHostInstancesForFiberShallowly(
-      fiber,
-      hostInstances,
-    );
-    if (foundHostInstances) {
-      return;
-    }
-    // If we didn't find any host children, fallback to closest host parent.
-    let node = fiber;
-    while (true) {
-      switch (node.tag) {
-        case HostComponent:
-          hostInstances.add(node.stateNode);
-          return;
-        case HostPortal:
-          hostInstances.add(node.stateNode.containerInfo);
-          return;
-        case HostRoot:
-          hostInstances.add(node.stateNode.containerInfo);
-          return;
-      }
-      if (node.return === null) {
-        throw new Error('Expected to reach root first.');
-      }
-      node = node.return;
-    }
-  }
-}
-
-function findChildHostInstancesForFiberShallowly(
-  fiber: Fiber,
-  hostInstances: Set<Instance>,
-): boolean {
-  if (__DEV__) {
-    let node: Fiber = fiber;
-    let foundHostInstances = false;
-    while (true) {
-      if (node.tag === HostComponent) {
-        // We got a match.
-        foundHostInstances = true;
-        hostInstances.add(node.stateNode);
-        // There may still be more, so keep searching.
-      } else if (node.child !== null) {
-        node.child.return = node;
-        node = node.child;
-        continue;
-      }
-      if (node === fiber) {
-        return foundHostInstances;
-      }
-      while (node.sibling === null) {
-        if (node.return === null || node.return === fiber) {
-          return foundHostInstances;
-        }
-        node = node.return;
-      }
-      node.sibling.return = node.return;
-      node = node.sibling;
-    }
-  }
-  return false;
 }

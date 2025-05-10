@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,14 +7,14 @@
  * @flow
  */
 
-export type Rect = {
-  bottom: number,
-  height: number,
-  left: number,
-  right: number,
-  top: number,
-  width: number,
-};
+export interface Rect {
+  bottom: number;
+  height: number;
+  left: number;
+  right: number;
+  top: number;
+  width: number;
+}
 
 // Get the window object for the document that a node belongs to,
 // or return null if it cannot be found (node not attached to DOM,
@@ -38,7 +38,7 @@ export function getOwnerIframe(node: HTMLElement): HTMLElement | null {
 
 // Get a bounding client rect for a node, with an
 // offset added to compensate for its border.
-export function getBoundingClientRectWithBorderOffset(node: HTMLElement) {
+export function getBoundingClientRectWithBorderOffset(node: HTMLElement): Rect {
   const dimensions = getElementDimensions(node);
   return mergeRectOffsets([
     node.getBoundingClientRect(),
@@ -49,7 +49,7 @@ export function getBoundingClientRectWithBorderOffset(node: HTMLElement) {
       right: dimensions.borderRight,
       // This width and height won't get used by mergeRectOffsets (since this
       // is not the first rect in the array), but we set them so that this
-      // object typechecks as a ClientRect.
+      // object type checks as a ClientRect.
       width: 0,
       height: 0,
     },
@@ -83,8 +83,8 @@ export function getNestedBoundingClientRect(
 ): Rect {
   const ownerIframe = getOwnerIframe(node);
   if (ownerIframe && ownerIframe !== boundaryWindow) {
-    const rects = [node.getBoundingClientRect()];
-    let currentIframe = ownerIframe;
+    const rects: Array<Rect | ClientRect> = [node.getBoundingClientRect()];
+    let currentIframe: null | HTMLElement = ownerIframe;
     let onlyOneMore = false;
     while (currentIframe) {
       const rect = getBoundingClientRectWithBorderOffset(currentIframe);
@@ -108,7 +108,20 @@ export function getNestedBoundingClientRect(
   }
 }
 
-export function getElementDimensions(domElement: Element) {
+export function getElementDimensions(domElement: HTMLElement): {
+  borderBottom: number,
+  borderLeft: number,
+  borderRight: number,
+  borderTop: number,
+  marginBottom: number,
+  marginLeft: number,
+  marginRight: number,
+  marginTop: number,
+  paddingBottom: number,
+  paddingLeft: number,
+  paddingRight: number,
+  paddingTop: number,
+} {
   const calculatedStyle = window.getComputedStyle(domElement);
   return {
     borderLeft: parseInt(calculatedStyle.borderLeftWidth, 10),
@@ -123,5 +136,30 @@ export function getElementDimensions(domElement: Element) {
     paddingRight: parseInt(calculatedStyle.paddingRight, 10),
     paddingTop: parseInt(calculatedStyle.paddingTop, 10),
     paddingBottom: parseInt(calculatedStyle.paddingBottom, 10),
+  };
+}
+
+export function extractHOCNames(displayName: string): {
+  baseComponentName: string,
+  hocNames: string[],
+} {
+  if (!displayName) return {baseComponentName: '', hocNames: []};
+
+  const hocRegex = /([A-Z][a-zA-Z0-9]*?)\((.*)\)/g;
+  const hocNames: string[] = [];
+  let baseComponentName = displayName;
+  let match;
+
+  while ((match = hocRegex.exec(baseComponentName)) != null) {
+    if (Array.isArray(match)) {
+      const [, hocName, inner] = match;
+      hocNames.push(hocName);
+      baseComponentName = inner;
+    }
+  }
+
+  return {
+    baseComponentName,
+    hocNames,
   };
 }

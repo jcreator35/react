@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,39 +7,51 @@
  * @flow
  */
 
-import type {Fiber} from './ReactFiber';
-import type {FiberRoot} from './ReactFiberRoot';
-import type {RootTag} from 'shared/ReactRootTags';
 import type {
-  Instance,
-  TextInstance,
+  Fiber,
+  FiberRoot,
+  SuspenseHydrationCallbacks,
+  TransitionTracingCallbacks,
+} from './ReactInternalTypes';
+import type {RootTag} from './ReactRootTags';
+import type {
   Container,
   PublicInstance,
-} from './ReactFiberHostConfig';
-import {FundamentalComponent} from 'shared/ReactWorkTags';
-import type {ReactNodeList} from 'shared/ReactTypes';
-import type {ExpirationTime} from './ReactFiberExpirationTime';
-import type {
-  SuspenseHydrationCallbacks,
-  SuspenseState,
-} from './ReactFiberSuspenseComponent';
+  RendererInspectionConfig,
+} from './ReactFiberConfig';
+import type {ReactNodeList, ReactFormState} from 'shared/ReactTypes';
+import type {Lane} from './ReactFiberLane';
+import type {ActivityState} from './ReactFiberActivityComponent';
+import type {SuspenseState} from './ReactFiberSuspenseComponent';
 
+import {LegacyRoot} from './ReactRootTags';
 import {
   findCurrentHostFiber,
   findCurrentHostFiberWithNoPortals,
-} from 'react-reconciler/reflection';
+} from './ReactFiberTreeReflection';
 import {get as getInstance} from 'shared/ReactInstanceMap';
 import {
   HostComponent,
+  HostSingleton,
   ClassComponent,
   HostRoot,
   SuspenseComponent,
-} from 'shared/ReactWorkTags';
-import getComponentName from 'shared/getComponentName';
-import invariant from 'shared/invariant';
+  ActivityComponent,
+} from './ReactWorkTags';
+import getComponentNameFromFiber from 'react-reconciler/src/getComponentNameFromFiber';
+import isArray from 'shared/isArray';
+import {
+  enableSchedulingProfiler,
+  enableHydrationLaneScheduling,
+  disableLegacyMode,
+} from 'shared/ReactFeatureFlags';
 import ReactSharedInternals from 'shared/ReactSharedInternals';
-
-import {getPublicInstance} from './ReactFiberHostConfig';
+import {
+  getPublicInstance,
+  rendererVersion,
+  rendererPackageName,
+  extraDevToolsConfig,
+} from './ReactFiberConfig';
 import {
   findCurrentUnmaskedContext,
   processChildContext,
@@ -47,71 +59,81 @@ import {
   isContextProvider as isLegacyContextProvider,
 } from './ReactFiberContext';
 import {createFiberRoot} from './ReactFiberRoot';
-import {injectInternals, onScheduleRoot} from './ReactFiberDevToolsHook';
+import {isRootDehydrated} from './ReactFiberShellHydration';
 import {
-  requestCurrentTimeForUpdate,
-  computeExpirationForFiber,
-  scheduleWork,
+  injectInternals,
+  markRenderScheduled,
+  onScheduleRoot,
+  injectProfilingHooks,
+} from './ReactFiberDevToolsHook';
+import {startUpdateTimerByLane} from './ReactProfilerTimer';
+import {
+  requestUpdateLane,
+  scheduleUpdateOnFiber,
+  scheduleInitialHydrationOnRoot,
   flushRoot,
-  batchedEventUpdates,
   batchedUpdates,
-  unbatchedUpdates,
-  flushSync,
-  flushControlled,
+  flushSyncFromReconciler,
+  flushSyncWork,
+  isAlreadyRendering,
   deferredUpdates,
-  syncUpdates,
   discreteUpdates,
-  flushDiscreteUpdates,
-  flushPassiveEffects,
-  warnIfNotScopedWithMatchingAct,
-  warnIfUnmockedScheduler,
-  IsThisRendererActing,
+  flushPendingEffects,
 } from './ReactFiberWorkLoop';
-import {createUpdate, enqueueUpdate} from './ReactUpdateQueue';
+import {enqueueConcurrentRenderForLane} from './ReactFiberConcurrentUpdates';
 import {
-  getStackByFiberInDevAndProd,
-  phase as ReactCurrentFiberPhase,
+  createUpdate,
+  enqueueUpdate,
+  entangleTransitions,
+} from './ReactFiberClassUpdateQueue';
+import {
+  isRendering as ReactCurrentFiberIsRendering,
   current as ReactCurrentFiberCurrent,
+  runWithFiberInDEV,
 } from './ReactCurrentFiber';
-import {StrictMode} from './ReactTypeOfMode';
+import {StrictLegacyMode} from './ReactTypeOfMode';
 import {
-  Sync,
-  computeInteractiveExpiration,
-  computeContinuousHydrationExpiration,
-} from './ReactFiberExpirationTime';
-import {requestCurrentSuspenseConfig} from './ReactFiberSuspenseConfig';
+  SyncLane,
+  SelectiveHydrationLane,
+  getHighestPriorityPendingLanes,
+  higherPriorityLane,
+  getBumpedLaneForHydrationByLane,
+} from './ReactFiberLane';
 import {
   scheduleRefresh,
   scheduleRoot,
   setRefreshHandler,
-  findHostInstancesForRefresh,
 } from './ReactFiberHotReloading';
+import ReactVersion from 'shared/ReactVersion';
+export {createPortal} from './ReactPortal';
+export {
+  createComponentSelector,
+  createHasPseudoClassSelector,
+  createRoleSelector,
+  createTestNameSelector,
+  createTextSelector,
+  getFindAllNodesFailureDescription,
+  findAllNodes,
+  findBoundingRects,
+  focusWithin,
+  observeVisibleRects,
+} from './ReactTestSelectors';
+export {startHostTransition} from './ReactFiberHooks';
+export {
+  defaultOnUncaughtError,
+  defaultOnCaughtError,
+  defaultOnRecoverableError,
+} from './ReactFiberErrorLogger';
+import {getLabelForLane, TotalLanes} from 'react-reconciler/src/ReactFiberLane';
 
 type OpaqueRoot = FiberRoot;
-
-// 0 is PROD, 1 is DEV.
-// Might add PROFILE later.
-type BundleType = 0 | 1;
-
-type DevToolsConfig = {|
-  bundleType: BundleType,
-  version: string,
-  rendererPackageName: string,
-  // Note: this actually *does* depend on Fiber internal fields.
-  // Used by "inspect clicked DOM element" in React DevTools.
-  findFiberByHostInstance?: (instance: Instance | TextInstance) => Fiber,
-  // Used by RN in-app inspector.
-  // This API is unfortunately RN-specific.
-  // TODO: Change it to accept Fiber instead and type it properly.
-  getInspectorDataForViewTag?: (tag: number) => Object,
-|};
 
 let didWarnAboutNestedUpdates;
 let didWarnAboutFindNodeInStrictMode;
 
 if (__DEV__) {
   didWarnAboutNestedUpdates = false;
-  didWarnAboutFindNodeInStrictMode = {};
+  didWarnAboutFindNodeInStrictMode = ({}: {[string]: boolean});
 }
 
 function getContextForSubtree(
@@ -138,12 +160,11 @@ function findHostInstance(component: Object): PublicInstance | null {
   const fiber = getInstance(component);
   if (fiber === undefined) {
     if (typeof component.render === 'function') {
-      invariant(false, 'Unable to find node on an unmounted component.');
+      throw new Error('Unable to find node on an unmounted component.');
     } else {
-      invariant(
-        false,
-        'Argument appears to not be a ReactComponent. Keys: %s',
-        Object.keys(component),
+      const keys = Object.keys(component).join(',');
+      throw new Error(
+        `Argument appears to not be a ReactComponent. Keys: ${keys}`,
       );
     }
   }
@@ -151,7 +172,7 @@ function findHostInstance(component: Object): PublicInstance | null {
   if (hostFiber === null) {
     return null;
   }
-  return hostFiber.stateNode;
+  return getPublicInstance(hostFiber.stateNode);
 }
 
 function findHostInstanceWithWarning(
@@ -162,12 +183,11 @@ function findHostInstanceWithWarning(
     const fiber = getInstance(component);
     if (fiber === undefined) {
       if (typeof component.render === 'function') {
-        invariant(false, 'Unable to find node on an unmounted component.');
+        throw new Error('Unable to find node on an unmounted component.');
       } else {
-        invariant(
-          false,
-          'Argument appears to not be a ReactComponent. Keys: %s',
-          Object.keys(component),
+        const keys = Object.keys(component).join(',');
+        throw new Error(
+          `Argument appears to not be a ReactComponent. Keys: ${keys}`,
         );
       }
     }
@@ -175,38 +195,38 @@ function findHostInstanceWithWarning(
     if (hostFiber === null) {
       return null;
     }
-    if (hostFiber.mode & StrictMode) {
-      const componentName = getComponentName(fiber.type) || 'Component';
+    if (hostFiber.mode & StrictLegacyMode) {
+      const componentName = getComponentNameFromFiber(fiber) || 'Component';
       if (!didWarnAboutFindNodeInStrictMode[componentName]) {
         didWarnAboutFindNodeInStrictMode[componentName] = true;
-        if (fiber.mode & StrictMode) {
-          console.error(
-            '%s is deprecated in StrictMode. ' +
-              '%s was passed an instance of %s which is inside StrictMode. ' +
-              'Instead, add a ref directly to the element you want to reference. ' +
-              'Learn more about using refs safely here: ' +
-              'https://fb.me/react-strict-mode-find-node%s',
-            methodName,
-            methodName,
-            componentName,
-            getStackByFiberInDevAndProd(hostFiber),
-          );
-        } else {
-          console.error(
-            '%s is deprecated in StrictMode. ' +
-              '%s was passed an instance of %s which renders StrictMode children. ' +
-              'Instead, add a ref directly to the element you want to reference. ' +
-              'Learn more about using refs safely here: ' +
-              'https://fb.me/react-strict-mode-find-node%s',
-            methodName,
-            methodName,
-            componentName,
-            getStackByFiberInDevAndProd(hostFiber),
-          );
-        }
+        runWithFiberInDEV(hostFiber, () => {
+          if (fiber.mode & StrictLegacyMode) {
+            console.error(
+              '%s is deprecated in StrictMode. ' +
+                '%s was passed an instance of %s which is inside StrictMode. ' +
+                'Instead, add a ref directly to the element you want to reference. ' +
+                'Learn more about using refs safely here: ' +
+                'https://react.dev/link/strict-mode-find-node',
+              methodName,
+              methodName,
+              componentName,
+            );
+          } else {
+            console.error(
+              '%s is deprecated in StrictMode. ' +
+                '%s was passed an instance of %s which renders StrictMode children. ' +
+                'Instead, add a ref directly to the element you want to reference. ' +
+                'Learn more about using refs safely here: ' +
+                'https://react.dev/link/strict-mode-find-node',
+              methodName,
+              methodName,
+              componentName,
+            );
+          }
+        });
       }
     }
-    return hostFiber.stateNode;
+    return getPublicInstance(hostFiber.stateNode);
   }
   return findHostInstance(component);
 }
@@ -214,10 +234,116 @@ function findHostInstanceWithWarning(
 export function createContainer(
   containerInfo: Container,
   tag: RootTag,
-  hydrate: boolean,
   hydrationCallbacks: null | SuspenseHydrationCallbacks,
+  isStrictMode: boolean,
+  // TODO: Remove `concurrentUpdatesByDefaultOverride`. It is now ignored.
+  concurrentUpdatesByDefaultOverride: null | boolean,
+  identifierPrefix: string,
+  onUncaughtError: (
+    error: mixed,
+    errorInfo: {+componentStack?: ?string},
+  ) => void,
+  onCaughtError: (
+    error: mixed,
+    errorInfo: {
+      +componentStack?: ?string,
+      +errorBoundary?: ?React$Component<any, any>,
+    },
+  ) => void,
+  onRecoverableError: (
+    error: mixed,
+    errorInfo: {+componentStack?: ?string},
+  ) => void,
+  onDefaultTransitionIndicator: () => void | (() => void),
+  transitionCallbacks: null | TransitionTracingCallbacks,
 ): OpaqueRoot {
-  return createFiberRoot(containerInfo, tag, hydrate, hydrationCallbacks);
+  const hydrate = false;
+  const initialChildren = null;
+  return createFiberRoot(
+    containerInfo,
+    tag,
+    hydrate,
+    initialChildren,
+    hydrationCallbacks,
+    isStrictMode,
+    identifierPrefix,
+    null,
+    onUncaughtError,
+    onCaughtError,
+    onRecoverableError,
+    onDefaultTransitionIndicator,
+    transitionCallbacks,
+  );
+}
+
+export function createHydrationContainer(
+  initialChildren: ReactNodeList,
+  // TODO: Remove `callback` when we delete legacy mode.
+  callback: ?Function,
+  containerInfo: Container,
+  tag: RootTag,
+  hydrationCallbacks: null | SuspenseHydrationCallbacks,
+  isStrictMode: boolean,
+  // TODO: Remove `concurrentUpdatesByDefaultOverride`. It is now ignored.
+  concurrentUpdatesByDefaultOverride: null | boolean,
+  identifierPrefix: string,
+  onUncaughtError: (
+    error: mixed,
+    errorInfo: {+componentStack?: ?string},
+  ) => void,
+  onCaughtError: (
+    error: mixed,
+    errorInfo: {
+      +componentStack?: ?string,
+      +errorBoundary?: ?React$Component<any, any>,
+    },
+  ) => void,
+  onRecoverableError: (
+    error: mixed,
+    errorInfo: {+componentStack?: ?string},
+  ) => void,
+  onDefaultTransitionIndicator: () => void | (() => void),
+  transitionCallbacks: null | TransitionTracingCallbacks,
+  formState: ReactFormState<any, any> | null,
+): OpaqueRoot {
+  const hydrate = true;
+  const root = createFiberRoot(
+    containerInfo,
+    tag,
+    hydrate,
+    initialChildren,
+    hydrationCallbacks,
+    isStrictMode,
+    identifierPrefix,
+    formState,
+    onUncaughtError,
+    onCaughtError,
+    onRecoverableError,
+    onDefaultTransitionIndicator,
+    transitionCallbacks,
+  );
+
+  // TODO: Move this to FiberRoot constructor
+  root.context = getContextForSubtree(null);
+
+  // Schedule the initial render. In a hydration root, this is different from
+  // a regular update because the initial render must match was was rendered
+  // on the server.
+  // NOTE: This update intentionally doesn't have a payload. We're only using
+  // the update to schedule work on the root fiber (and, for legacy roots, to
+  // enqueue the callback if one is provided).
+  const current = root.current;
+  let lane = requestUpdateLane(current);
+  if (enableHydrationLaneScheduling) {
+    lane = getBumpedLaneForHydrationByLane(lane);
+  }
+  const update = createUpdate(lane);
+  update.callback =
+    callback !== undefined && callback !== null ? callback : null;
+  enqueueUpdate(current, update, lane);
+  scheduleInitialHydrationOnRoot(root, lane);
+
+  return root;
 }
 
 export function updateContainer(
@@ -225,25 +351,56 @@ export function updateContainer(
   container: OpaqueRoot,
   parentComponent: ?React$Component<any, any>,
   callback: ?Function,
-): ExpirationTime {
+): Lane {
+  const current = container.current;
+  const lane = requestUpdateLane(current);
+  updateContainerImpl(
+    current,
+    lane,
+    element,
+    container,
+    parentComponent,
+    callback,
+  );
+  return lane;
+}
+
+export function updateContainerSync(
+  element: ReactNodeList,
+  container: OpaqueRoot,
+  parentComponent: ?React$Component<any, any>,
+  callback: ?Function,
+): Lane {
+  if (!disableLegacyMode && container.tag === LegacyRoot) {
+    flushPendingEffects();
+  }
+  const current = container.current;
+  updateContainerImpl(
+    current,
+    SyncLane,
+    element,
+    container,
+    parentComponent,
+    callback,
+  );
+  return SyncLane;
+}
+
+function updateContainerImpl(
+  rootFiber: Fiber,
+  lane: Lane,
+  element: ReactNodeList,
+  container: OpaqueRoot,
+  parentComponent: ?React$Component<any, any>,
+  callback: ?Function,
+): void {
   if (__DEV__) {
     onScheduleRoot(container, element);
   }
-  const current = container.current;
-  const currentTime = requestCurrentTimeForUpdate();
-  if (__DEV__) {
-    // $FlowExpectedError - jest isn't a global, and isn't recognized outside of tests
-    if ('undefined' !== typeof jest) {
-      warnIfUnmockedScheduler(current);
-      warnIfNotScopedWithMatchingAct(current);
-    }
+
+  if (enableSchedulingProfiler) {
+    markRenderScheduled(lane);
   }
-  const suspenseConfig = requestCurrentSuspenseConfig();
-  const expirationTime = computeExpirationForFiber(
-    currentTime,
-    current,
-    suspenseConfig,
-  );
 
   const context = getContextForSubtree(parentComponent);
   if (container.context === null) {
@@ -254,7 +411,7 @@ export function updateContainer(
 
   if (__DEV__) {
     if (
-      ReactCurrentFiberPhase === 'render' &&
+      ReactCurrentFiberIsRendering &&
       ReactCurrentFiberCurrent !== null &&
       !didWarnAboutNestedUpdates
     ) {
@@ -264,12 +421,12 @@ export function updateContainer(
           'triggering nested component updates from render is not allowed. ' +
           'If necessary, trigger nested updates in componentDidUpdate.\n\n' +
           'Check the render method of %s.',
-        getComponentName(ReactCurrentFiberCurrent.type) || 'Unknown',
+        getComponentNameFromFiber(ReactCurrentFiberCurrent) || 'Unknown',
       );
     }
   }
 
-  const update = createUpdate(expirationTime, suspenseConfig);
+  const update = createUpdate(lane);
   // Caution: React DevTools currently depends on this property
   // being called "element".
   update.payload = {element};
@@ -279,7 +436,7 @@ export function updateContainer(
     if (__DEV__) {
       if (typeof callback !== 'function') {
         console.error(
-          'render(...): Expected the last optional `callback` argument to be a ' +
+          'Expected the last optional `callback` argument to be a ' +
             'function. Instead received: %s.',
           callback,
         );
@@ -288,24 +445,22 @@ export function updateContainer(
     update.callback = callback;
   }
 
-  enqueueUpdate(current, update);
-  scheduleWork(current, expirationTime);
-
-  return expirationTime;
+  const root = enqueueUpdate(rootFiber, update, lane);
+  if (root !== null) {
+    startUpdateTimerByLane(lane, 'root.render()');
+    scheduleUpdateOnFiber(root, rootFiber, lane);
+    entangleTransitions(root, rootFiber, lane);
+  }
 }
 
 export {
-  batchedEventUpdates,
   batchedUpdates,
-  unbatchedUpdates,
   deferredUpdates,
-  syncUpdates,
   discreteUpdates,
-  flushDiscreteUpdates,
-  flushControlled,
-  flushSync,
-  flushPassiveEffects,
-  IsThisRendererActing,
+  flushSyncFromReconciler,
+  flushSyncWork,
+  isAlreadyRendering,
+  flushPendingEffects as flushPassiveEffects,
 };
 
 export function getPublicRootInstance(
@@ -316,6 +471,7 @@ export function getPublicRootInstance(
     return null;
   }
   switch (containerFiber.child.tag) {
+    case HostSingleton:
     case HostComponent:
       return getPublicInstance(containerFiber.child.stateNode);
     default:
@@ -325,82 +481,83 @@ export function getPublicRootInstance(
 
 export function attemptSynchronousHydration(fiber: Fiber): void {
   switch (fiber.tag) {
-    case HostRoot:
-      let root: FiberRoot = fiber.stateNode;
-      if (root.hydrate) {
+    case HostRoot: {
+      const root: FiberRoot = fiber.stateNode;
+      if (isRootDehydrated(root)) {
         // Flush the first scheduled "update".
-        flushRoot(root, root.firstPendingTime);
+        const lanes = getHighestPriorityPendingLanes(root);
+        flushRoot(root, lanes);
       }
       break;
-    case SuspenseComponent:
-      flushSync(() => scheduleWork(fiber, Sync));
+    }
+    case ActivityComponent:
+    case SuspenseComponent: {
+      const root = enqueueConcurrentRenderForLane(fiber, SyncLane);
+      if (root !== null) {
+        scheduleUpdateOnFiber(root, fiber, SyncLane);
+      }
+      flushSyncWork();
       // If we're still blocked after this, we need to increase
       // the priority of any promises resolving within this
       // boundary so that they next attempt also has higher pri.
-      let retryExpTime = computeInteractiveExpiration(
-        requestCurrentTimeForUpdate(),
-      );
-      markRetryTimeIfNotHydrated(fiber, retryExpTime);
+      const retryLane = SyncLane;
+      markRetryLaneIfNotHydrated(fiber, retryLane);
       break;
-  }
-}
-
-function markRetryTimeImpl(fiber: Fiber, retryTime: ExpirationTime) {
-  let suspenseState: null | SuspenseState = fiber.memoizedState;
-  if (suspenseState !== null && suspenseState.dehydrated !== null) {
-    if (suspenseState.retryTime < retryTime) {
-      suspenseState.retryTime = retryTime;
     }
   }
 }
 
-// Increases the priority of thennables when they resolve within this boundary.
-function markRetryTimeIfNotHydrated(fiber: Fiber, retryTime: ExpirationTime) {
-  markRetryTimeImpl(fiber, retryTime);
-  let alternate = fiber.alternate;
-  if (alternate) {
-    markRetryTimeImpl(alternate, retryTime);
+function markRetryLaneImpl(fiber: Fiber, retryLane: Lane) {
+  const suspenseState: null | SuspenseState | ActivityState =
+    fiber.memoizedState;
+  if (suspenseState !== null && suspenseState.dehydrated !== null) {
+    suspenseState.retryLane = higherPriorityLane(
+      suspenseState.retryLane,
+      retryLane,
+    );
   }
 }
 
-export function attemptUserBlockingHydration(fiber: Fiber): void {
-  if (fiber.tag !== SuspenseComponent) {
-    // We ignore HostRoots here because we can't increase
-    // their priority and they should not suspend on I/O,
-    // since you have to wrap anything that might suspend in
-    // Suspense.
-    return;
+// Increases the priority of thenables when they resolve within this boundary.
+function markRetryLaneIfNotHydrated(fiber: Fiber, retryLane: Lane) {
+  markRetryLaneImpl(fiber, retryLane);
+  const alternate = fiber.alternate;
+  if (alternate) {
+    markRetryLaneImpl(alternate, retryLane);
   }
-  let expTime = computeInteractiveExpiration(requestCurrentTimeForUpdate());
-  scheduleWork(fiber, expTime);
-  markRetryTimeIfNotHydrated(fiber, expTime);
 }
 
 export function attemptContinuousHydration(fiber: Fiber): void {
-  if (fiber.tag !== SuspenseComponent) {
+  if (fiber.tag !== SuspenseComponent && fiber.tag !== ActivityComponent) {
     // We ignore HostRoots here because we can't increase
     // their priority and they should not suspend on I/O,
     // since you have to wrap anything that might suspend in
     // Suspense.
     return;
   }
-  let expTime = computeContinuousHydrationExpiration(
-    requestCurrentTimeForUpdate(),
-  );
-  scheduleWork(fiber, expTime);
-  markRetryTimeIfNotHydrated(fiber, expTime);
+  const lane = SelectiveHydrationLane;
+  const root = enqueueConcurrentRenderForLane(fiber, lane);
+  if (root !== null) {
+    scheduleUpdateOnFiber(root, fiber, lane);
+  }
+  markRetryLaneIfNotHydrated(fiber, lane);
 }
 
 export function attemptHydrationAtCurrentPriority(fiber: Fiber): void {
-  if (fiber.tag !== SuspenseComponent) {
+  if (fiber.tag !== SuspenseComponent && fiber.tag !== ActivityComponent) {
     // We ignore HostRoots here because we can't increase
     // their priority other than synchronously flush it.
     return;
   }
-  const currentTime = requestCurrentTimeForUpdate();
-  const expTime = computeExpirationForFiber(currentTime, fiber, null);
-  scheduleWork(fiber, expTime);
-  markRetryTimeIfNotHydrated(fiber, expTime);
+  let lane = requestUpdateLane(fiber);
+  if (enableHydrationLaneScheduling) {
+    lane = getBumpedLaneForHydrationByLane(lane);
+  }
+  const root = enqueueConcurrentRenderForLane(fiber, lane);
+  if (root !== null) {
+    scheduleUpdateOnFiber(root, fiber, lane);
+  }
+  markRetryLaneIfNotHydrated(fiber, lane);
 }
 
 export {findHostInstance};
@@ -414,37 +571,123 @@ export function findHostInstanceWithNoPortals(
   if (hostFiber === null) {
     return null;
   }
-  if (hostFiber.tag === FundamentalComponent) {
-    return hostFiber.stateNode.instance;
-  }
-  return hostFiber.stateNode;
+  return getPublicInstance(hostFiber.stateNode);
 }
 
-let shouldSuspendImpl = fiber => false;
+let shouldErrorImpl: Fiber => ?boolean = fiber => null;
+
+export function shouldError(fiber: Fiber): ?boolean {
+  return shouldErrorImpl(fiber);
+}
+
+let shouldSuspendImpl = (fiber: Fiber) => false;
 
 export function shouldSuspend(fiber: Fiber): boolean {
   return shouldSuspendImpl(fiber);
 }
 
 let overrideHookState = null;
+let overrideHookStateDeletePath = null;
+let overrideHookStateRenamePath = null;
 let overrideProps = null;
+let overridePropsDeletePath = null;
+let overridePropsRenamePath = null;
 let scheduleUpdate = null;
+let setErrorHandler = null;
 let setSuspenseHandler = null;
 
 if (__DEV__) {
+  const copyWithDeleteImpl = (
+    obj: Object | Array<any>,
+    path: Array<string | number>,
+    index: number,
+  ): $FlowFixMe => {
+    const key = path[index];
+    const updated = isArray(obj) ? obj.slice() : {...obj};
+    if (index + 1 === path.length) {
+      if (isArray(updated)) {
+        updated.splice(((key: any): number), 1);
+      } else {
+        delete updated[key];
+      }
+      return updated;
+    }
+    // $FlowFixMe[incompatible-use] number or string is fine here
+    updated[key] = copyWithDeleteImpl(obj[key], path, index + 1);
+    return updated;
+  };
+
+  const copyWithDelete = (
+    obj: Object | Array<any>,
+    path: Array<string | number>,
+  ): Object | Array<any> => {
+    return copyWithDeleteImpl(obj, path, 0);
+  };
+
+  const copyWithRenameImpl = (
+    obj: Object | Array<any>,
+    oldPath: Array<string | number>,
+    newPath: Array<string | number>,
+    index: number,
+  ): $FlowFixMe => {
+    const oldKey = oldPath[index];
+    const updated = isArray(obj) ? obj.slice() : {...obj};
+    if (index + 1 === oldPath.length) {
+      const newKey = newPath[index];
+      // $FlowFixMe[incompatible-use] number or string is fine here
+      updated[newKey] = updated[oldKey];
+      if (isArray(updated)) {
+        updated.splice(((oldKey: any): number), 1);
+      } else {
+        delete updated[oldKey];
+      }
+    } else {
+      // $FlowFixMe[incompatible-use] number or string is fine here
+      updated[oldKey] = copyWithRenameImpl(
+        // $FlowFixMe[incompatible-use] number or string is fine here
+        obj[oldKey],
+        oldPath,
+        newPath,
+        index + 1,
+      );
+    }
+    return updated;
+  };
+
+  const copyWithRename = (
+    obj: Object | Array<any>,
+    oldPath: Array<string | number>,
+    newPath: Array<string | number>,
+  ): Object | Array<any> => {
+    if (oldPath.length !== newPath.length) {
+      console.warn('copyWithRename() expects paths of the same length');
+      return;
+    } else {
+      for (let i = 0; i < newPath.length - 1; i++) {
+        if (oldPath[i] !== newPath[i]) {
+          console.warn(
+            'copyWithRename() expects paths to be the same except for the deepest key',
+          );
+          return;
+        }
+      }
+    }
+    return copyWithRenameImpl(obj, oldPath, newPath, 0);
+  };
+
   const copyWithSetImpl = (
     obj: Object | Array<any>,
     path: Array<string | number>,
-    idx: number,
+    index: number,
     value: any,
-  ) => {
-    if (idx >= path.length) {
+  ): $FlowFixMe => {
+    if (index >= path.length) {
       return value;
     }
-    const key = path[idx];
-    const updated = Array.isArray(obj) ? obj.slice() : {...obj};
-    // $FlowFixMe number or string is fine here
-    updated[key] = copyWithSetImpl(obj[key], path, idx + 1, value);
+    const key = path[index];
+    const updated = isArray(obj) ? obj.slice() : {...obj};
+    // $FlowFixMe[incompatible-use] number or string is fine here
+    updated[key] = copyWithSetImpl(obj[key], path, index + 1, value);
     return updated;
   };
 
@@ -456,13 +699,7 @@ if (__DEV__) {
     return copyWithSetImpl(obj, path, 0, value);
   };
 
-  // Support DevTools editable values for useState and useReducer.
-  overrideHookState = (
-    fiber: Fiber,
-    id: number,
-    path: Array<string | number>,
-    value: any,
-  ) => {
+  const findHook = (fiber: Fiber, id: number) => {
     // For now, the "id" of stateful hooks is just the stateful hook index.
     // This may change in the future with e.g. nested hooks.
     let currentHook = fiber.memoizedState;
@@ -470,10 +707,21 @@ if (__DEV__) {
       currentHook = currentHook.next;
       id--;
     }
-    if (currentHook !== null) {
-      const newState = copyWithSet(currentHook.memoizedState, path, value);
-      currentHook.memoizedState = newState;
-      currentHook.baseState = newState;
+    return currentHook;
+  };
+
+  // Support DevTools editable values for useState and useReducer.
+  overrideHookState = (
+    fiber: Fiber,
+    id: number,
+    path: Array<string | number>,
+    value: any,
+  ) => {
+    const hook = findHook(fiber, id);
+    if (hook !== null) {
+      const newState = copyWithSet(hook.memoizedState, path, value);
+      hook.memoizedState = newState;
+      hook.baseState = newState;
 
       // We aren't actually adding an update to the queue,
       // because there is no update we can add for useReducer hooks that won't trigger an error.
@@ -482,7 +730,59 @@ if (__DEV__) {
       // Shallow cloning props works as a workaround for now to bypass the bailout check.
       fiber.memoizedProps = {...fiber.memoizedProps};
 
-      scheduleWork(fiber, Sync);
+      const root = enqueueConcurrentRenderForLane(fiber, SyncLane);
+      if (root !== null) {
+        scheduleUpdateOnFiber(root, fiber, SyncLane);
+      }
+    }
+  };
+  overrideHookStateDeletePath = (
+    fiber: Fiber,
+    id: number,
+    path: Array<string | number>,
+  ) => {
+    const hook = findHook(fiber, id);
+    if (hook !== null) {
+      const newState = copyWithDelete(hook.memoizedState, path);
+      hook.memoizedState = newState;
+      hook.baseState = newState;
+
+      // We aren't actually adding an update to the queue,
+      // because there is no update we can add for useReducer hooks that won't trigger an error.
+      // (There's no appropriate action type for DevTools overrides.)
+      // As a result though, React will see the scheduled update as a noop and bailout.
+      // Shallow cloning props works as a workaround for now to bypass the bailout check.
+      fiber.memoizedProps = {...fiber.memoizedProps};
+
+      const root = enqueueConcurrentRenderForLane(fiber, SyncLane);
+      if (root !== null) {
+        scheduleUpdateOnFiber(root, fiber, SyncLane);
+      }
+    }
+  };
+  overrideHookStateRenamePath = (
+    fiber: Fiber,
+    id: number,
+    oldPath: Array<string | number>,
+    newPath: Array<string | number>,
+  ) => {
+    const hook = findHook(fiber, id);
+    if (hook !== null) {
+      const newState = copyWithRename(hook.memoizedState, oldPath, newPath);
+      hook.memoizedState = newState;
+      hook.baseState = newState;
+
+      // We aren't actually adding an update to the queue,
+      // because there is no update we can add for useReducer hooks that won't trigger an error.
+      // (There's no appropriate action type for DevTools overrides.)
+      // As a result though, React will see the scheduled update as a noop and bailout.
+      // Shallow cloning props works as a workaround for now to bypass the bailout check.
+      fiber.memoizedProps = {...fiber.memoizedProps};
+
+      const root = enqueueConcurrentRenderForLane(fiber, SyncLane);
+      if (root !== null) {
+        scheduleUpdateOnFiber(root, fiber, SyncLane);
+      }
     }
   };
 
@@ -492,11 +792,45 @@ if (__DEV__) {
     if (fiber.alternate) {
       fiber.alternate.pendingProps = fiber.pendingProps;
     }
-    scheduleWork(fiber, Sync);
+    const root = enqueueConcurrentRenderForLane(fiber, SyncLane);
+    if (root !== null) {
+      scheduleUpdateOnFiber(root, fiber, SyncLane);
+    }
+  };
+  overridePropsDeletePath = (fiber: Fiber, path: Array<string | number>) => {
+    fiber.pendingProps = copyWithDelete(fiber.memoizedProps, path);
+    if (fiber.alternate) {
+      fiber.alternate.pendingProps = fiber.pendingProps;
+    }
+    const root = enqueueConcurrentRenderForLane(fiber, SyncLane);
+    if (root !== null) {
+      scheduleUpdateOnFiber(root, fiber, SyncLane);
+    }
+  };
+  overridePropsRenamePath = (
+    fiber: Fiber,
+    oldPath: Array<string | number>,
+    newPath: Array<string | number>,
+  ) => {
+    fiber.pendingProps = copyWithRename(fiber.memoizedProps, oldPath, newPath);
+    if (fiber.alternate) {
+      fiber.alternate.pendingProps = fiber.pendingProps;
+    }
+    const root = enqueueConcurrentRenderForLane(fiber, SyncLane);
+    if (root !== null) {
+      scheduleUpdateOnFiber(root, fiber, SyncLane);
+    }
   };
 
   scheduleUpdate = (fiber: Fiber) => {
-    scheduleWork(fiber, Sync);
+    const root = enqueueConcurrentRenderForLane(fiber, SyncLane);
+    if (root !== null) {
+      scheduleUpdateOnFiber(root, fiber, SyncLane);
+    }
+  };
+
+  setErrorHandler = (newShouldErrorImpl: Fiber => ?boolean) => {
+    shouldErrorImpl = newShouldErrorImpl;
   };
 
   setSuspenseHandler = (newShouldSuspendImpl: Fiber => boolean) => {
@@ -504,37 +838,63 @@ if (__DEV__) {
   };
 }
 
-export function injectIntoDevTools(devToolsConfig: DevToolsConfig): boolean {
-  const {findFiberByHostInstance} = devToolsConfig;
-  const {ReactCurrentDispatcher} = ReactSharedInternals;
+function getCurrentFiberForDevTools() {
+  return ReactCurrentFiberCurrent;
+}
 
-  return injectInternals({
-    ...devToolsConfig,
-    overrideHookState,
-    overrideProps,
-    setSuspenseHandler,
-    scheduleUpdate,
-    currentDispatcherRef: ReactCurrentDispatcher,
-    findHostInstanceByFiber(fiber: Fiber): Instance | TextInstance | null {
-      const hostFiber = findCurrentHostFiber(fiber);
-      if (hostFiber === null) {
-        return null;
-      }
-      return hostFiber.stateNode;
-    },
-    findFiberByHostInstance(instance: Instance | TextInstance): Fiber | null {
-      if (!findFiberByHostInstance) {
-        // Might not be implemented by the renderer.
-        return null;
-      }
-      return findFiberByHostInstance(instance);
-    },
+function getLaneLabelMap(): Map<Lane, string> | null {
+  if (enableSchedulingProfiler) {
+    const map: Map<Lane, string> = new Map();
+
+    let lane = 1;
+    for (let index = 0; index < TotalLanes; index++) {
+      const label = ((getLabelForLane(lane): any): string);
+      map.set(lane, label);
+      lane *= 2;
+    }
+
+    return map;
+  } else {
+    return null;
+  }
+}
+
+export function injectIntoDevTools(): boolean {
+  const internals: Object = {
+    bundleType: __DEV__ ? 1 : 0, // Might add PROFILE later.
+    version: rendererVersion,
+    rendererPackageName: rendererPackageName,
+    currentDispatcherRef: ReactSharedInternals,
+    // Enables DevTools to detect reconciler version rather than renderer version
+    // which may not match for third party renderers.
+    reconcilerVersion: ReactVersion,
+  };
+  if (extraDevToolsConfig !== null) {
+    internals.rendererConfig = (extraDevToolsConfig: RendererInspectionConfig);
+  }
+  if (__DEV__) {
+    internals.overrideHookState = overrideHookState;
+    internals.overrideHookStateDeletePath = overrideHookStateDeletePath;
+    internals.overrideHookStateRenamePath = overrideHookStateRenamePath;
+    internals.overrideProps = overrideProps;
+    internals.overridePropsDeletePath = overridePropsDeletePath;
+    internals.overridePropsRenamePath = overridePropsRenamePath;
+    internals.scheduleUpdate = scheduleUpdate;
+    internals.setErrorHandler = setErrorHandler;
+    internals.setSuspenseHandler = setSuspenseHandler;
     // React Refresh
-    findHostInstancesForRefresh: __DEV__ ? findHostInstancesForRefresh : null,
-    scheduleRefresh: __DEV__ ? scheduleRefresh : null,
-    scheduleRoot: __DEV__ ? scheduleRoot : null,
-    setRefreshHandler: __DEV__ ? setRefreshHandler : null,
+    internals.scheduleRefresh = scheduleRefresh;
+    internals.scheduleRoot = scheduleRoot;
+    internals.setRefreshHandler = setRefreshHandler;
     // Enables DevTools to append owner stacks to error messages in DEV mode.
-    getCurrentFiber: __DEV__ ? () => ReactCurrentFiberCurrent : null,
-  });
+    internals.getCurrentFiber = getCurrentFiberForDevTools;
+  }
+  if (enableSchedulingProfiler) {
+    // Conditionally inject these hooks only if Timeline profiler is supported by this build.
+    // This gives DevTools a way to feature detect that isn't tied to version number
+    // (since profiling and timeline are controlled by different feature flags).
+    internals.getLaneLabelMap = getLaneLabelMap;
+    internals.injectProfilingHooks = injectProfilingHooks;
+  }
+  return injectInternals(internals);
 }

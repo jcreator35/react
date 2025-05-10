@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,30 +7,33 @@
  * @flow
  */
 
-import Symbol from 'es6-symbol';
 import {
   getDataType,
   getDisplayNameForReactElement,
+  getAllEnumerableKeys,
   getInObject,
   formatDataForPreview,
   setInObject,
-} from './utils';
+} from 'react-devtools-shared/src/utils';
 
-import type {DehydratedData} from 'react-devtools-shared/src/devtools/views/Components/types';
+import type {
+  DehydratedData,
+  InspectedElementPath,
+} from 'react-devtools-shared/src/frontend/types';
 
 export const meta = {
-  inspectable: Symbol('inspectable'),
-  inspected: Symbol('inspected'),
-  name: Symbol('name'),
-  preview_long: Symbol('preview_long'),
-  preview_short: Symbol('preview_short'),
-  readonly: Symbol('readonly'),
-  size: Symbol('size'),
-  type: Symbol('type'),
-  unserializable: Symbol('unserializable'),
+  inspectable: (Symbol('inspectable'): symbol),
+  inspected: (Symbol('inspected'): symbol),
+  name: (Symbol('name'): symbol),
+  preview_long: (Symbol('preview_long'): symbol),
+  preview_short: (Symbol('preview_short'): symbol),
+  readonly: (Symbol('readonly'): symbol),
+  size: (Symbol('size'): symbol),
+  type: (Symbol('type'): symbol),
+  unserializable: (Symbol('unserializable'): symbol),
 };
 
-export type Dehydrated = {|
+export type Dehydrated = {
   inspectable: boolean,
   name: string | null,
   preview_long: string | null,
@@ -38,9 +41,9 @@ export type Dehydrated = {|
   readonly?: boolean,
   size?: number,
   type: string,
-|};
+};
 
-// Typed arrays and other complex iteratable objects (e.g. Map, Set, ImmutableJS) need special handling.
+// Typed arrays, other complex iteratable objects (e.g. Map, Set, ImmutableJS) or Promises need special handling.
 // These objects can't be serialized without losing type information,
 // so a "Unserializable" type wrapper is used (with meta-data keys) to send nested values-
 // while preserving the original type and name.
@@ -52,6 +55,7 @@ export type Unserializable = {
   size?: number,
   type: string,
   unserializable: boolean,
+  [string | number]: any,
 };
 
 // This threshold determines the depth at which the bridge "dehydrates" nested data.
@@ -80,7 +84,9 @@ function createDehydrated(
     preview_long: formatDataForPreview(data, true),
     preview_short: formatDataForPreview(data, false),
     name:
-      !data.constructor || data.constructor.name === 'Object'
+      typeof data.constructor !== 'function' ||
+      typeof data.constructor.name !== 'string' ||
+      data.constructor.name === 'Object'
         ? ''
         : data.constructor.name,
   };
@@ -121,18 +127,12 @@ export function dehydrate(
   cleaned: Array<Array<string | number>>,
   unserializable: Array<Array<string | number>>,
   path: Array<string | number>,
-  isPathWhitelisted: (path: Array<string | number>) => boolean,
-  level?: number = 0,
-):
-  | string
-  | Dehydrated
-  | Unserializable
-  | Array<Dehydrated>
-  | Array<Unserializable>
-  | {[key: string]: string | Dehydrated | Unserializable} {
+  isPathAllowed: (path: Array<string | number>) => boolean,
+  level: number = 0,
+): $PropertyType<DehydratedData, 'data'> {
   const type = getDataType(data);
 
-  let isPathWhitelistedCheck;
+  let isPathAllowedCheck;
 
   switch (type) {
     case 'html_element':
@@ -151,12 +151,20 @@ export function dehydrate(
         inspectable: false,
         preview_short: formatDataForPreview(data, false),
         preview_long: formatDataForPreview(data, true),
-        name: data.name,
+        name:
+          typeof data.name === 'function' || !data.name
+            ? 'function'
+            : data.name,
         type,
       };
 
     case 'string':
-      return data.length <= 500 ? data : data.slice(0, 500) + '...';
+      isPathAllowedCheck = isPathAllowed(path);
+      if (isPathAllowedCheck) {
+        return data;
+      } else {
+        return data.length <= 500 ? data : data.slice(0, 500) + '...';
+      }
 
     case 'bigint':
       cleaned.push(path);
@@ -204,25 +212,29 @@ export function dehydrate(
       };
 
     case 'array':
-      isPathWhitelistedCheck = isPathWhitelisted(path);
-      if (level >= LEVEL_THRESHOLD && !isPathWhitelistedCheck) {
+      isPathAllowedCheck = isPathAllowed(path);
+      if (level >= LEVEL_THRESHOLD && !isPathAllowedCheck) {
         return createDehydrated(type, true, data, cleaned, path);
       }
-      return data.map((item, i) =>
-        dehydrate(
-          item,
+      const arr: Array<Object> = [];
+      for (let i = 0; i < data.length; i++) {
+        arr[i] = dehydrateKey(
+          data,
+          i,
           cleaned,
           unserializable,
           path.concat([i]),
-          isPathWhitelisted,
-          isPathWhitelistedCheck ? 1 : level + 1,
-        ),
-      );
+          isPathAllowed,
+          isPathAllowedCheck ? 1 : level + 1,
+        );
+      }
+      return arr;
 
+    case 'html_all_collection':
     case 'typed_array':
     case 'iterator':
-      isPathWhitelistedCheck = isPathWhitelisted(path);
-      if (level >= LEVEL_THRESHOLD && !isPathWhitelistedCheck) {
+      isPathAllowedCheck = isPathAllowed(path);
+      if (level >= LEVEL_THRESHOLD && !isPathAllowedCheck) {
         return createDehydrated(type, true, data, cleaned, path);
       } else {
         const unserializableValue: Unserializable = {
@@ -233,33 +245,43 @@ export function dehydrate(
           preview_short: formatDataForPreview(data, false),
           preview_long: formatDataForPreview(data, true),
           name:
-            !data.constructor || data.constructor.name === 'Object'
+            typeof data.constructor !== 'function' ||
+            typeof data.constructor.name !== 'string' ||
+            data.constructor.name === 'Object'
               ? ''
               : data.constructor.name,
         };
 
-        if (typeof data[Symbol.iterator]) {
-          // TRICKY
-          // Don't use [...spread] syntax for this purpose.
-          // This project uses @babel/plugin-transform-spread in "loose" mode which only works with Array values.
-          // Other types (e.g. typed arrays, Sets) will not spread correctly.
-          Array.from(data).forEach(
-            (item, i) =>
-              (unserializableValue[i] = dehydrate(
-                item,
-                cleaned,
-                unserializable,
-                path.concat([i]),
-                isPathWhitelisted,
-                isPathWhitelistedCheck ? 1 : level + 1,
-              )),
-          );
-        }
+        // TRICKY
+        // Don't use [...spread] syntax for this purpose.
+        // This project uses @babel/plugin-transform-spread in "loose" mode which only works with Array values.
+        // Other types (e.g. typed arrays, Sets) will not spread correctly.
+        Array.from(data).forEach(
+          (item, i) =>
+            (unserializableValue[i] = dehydrate(
+              item,
+              cleaned,
+              unserializable,
+              path.concat([i]),
+              isPathAllowed,
+              isPathAllowedCheck ? 1 : level + 1,
+            )),
+        );
 
         unserializable.push(path);
 
         return unserializableValue;
       }
+
+    case 'opaque_iterator':
+      cleaned.push(path);
+      return {
+        inspectable: false,
+        preview_short: formatDataForPreview(data, false),
+        preview_long: formatDataForPreview(data, true),
+        name: data[Symbol.toStringTag],
+        type,
+      };
 
     case 'date':
       cleaned.push(path);
@@ -281,44 +303,256 @@ export function dehydrate(
         type,
       };
 
+    case 'thenable':
+      isPathAllowedCheck = isPathAllowed(path);
+
+      if (level >= LEVEL_THRESHOLD && !isPathAllowedCheck) {
+        return {
+          inspectable:
+            data.status === 'fulfilled' || data.status === 'rejected',
+          preview_short: formatDataForPreview(data, false),
+          preview_long: formatDataForPreview(data, true),
+          name: data.toString(),
+          type,
+        };
+      }
+
+      switch (data.status) {
+        case 'fulfilled': {
+          const unserializableValue: Unserializable = {
+            unserializable: true,
+            type: type,
+            preview_short: formatDataForPreview(data, false),
+            preview_long: formatDataForPreview(data, true),
+            name: 'fulfilled Thenable',
+          };
+
+          unserializableValue.value = dehydrate(
+            data.value,
+            cleaned,
+            unserializable,
+            path.concat(['value']),
+            isPathAllowed,
+            isPathAllowedCheck ? 1 : level + 1,
+          );
+
+          unserializable.push(path);
+
+          return unserializableValue;
+        }
+        case 'rejected': {
+          const unserializableValue: Unserializable = {
+            unserializable: true,
+            type: type,
+            preview_short: formatDataForPreview(data, false),
+            preview_long: formatDataForPreview(data, true),
+            name: 'rejected Thenable',
+          };
+
+          unserializableValue.reason = dehydrate(
+            data.reason,
+            cleaned,
+            unserializable,
+            path.concat(['reason']),
+            isPathAllowed,
+            isPathAllowedCheck ? 1 : level + 1,
+          );
+
+          unserializable.push(path);
+
+          return unserializableValue;
+        }
+        default:
+          cleaned.push(path);
+          return {
+            inspectable: false,
+            preview_short: formatDataForPreview(data, false),
+            preview_long: formatDataForPreview(data, true),
+            name: data.toString(),
+            type,
+          };
+      }
+
     case 'object':
-      isPathWhitelistedCheck = isPathWhitelisted(path);
-      if (level >= LEVEL_THRESHOLD && !isPathWhitelistedCheck) {
+      isPathAllowedCheck = isPathAllowed(path);
+
+      if (level >= LEVEL_THRESHOLD && !isPathAllowedCheck) {
         return createDehydrated(type, true, data, cleaned, path);
       } else {
-        const object = {};
-        for (let name in data) {
-          object[name] = dehydrate(
-            data[name],
+        const object: {
+          [string]: $PropertyType<DehydratedData, 'data'>,
+        } = {};
+        getAllEnumerableKeys(data).forEach(key => {
+          const name = key.toString();
+          object[name] = dehydrateKey(
+            data,
+            key,
             cleaned,
             unserializable,
             path.concat([name]),
-            isPathWhitelisted,
-            isPathWhitelistedCheck ? 1 : level + 1,
+            isPathAllowed,
+            isPathAllowedCheck ? 1 : level + 1,
           );
-        }
+        });
         return object;
       }
 
+    case 'class_instance': {
+      isPathAllowedCheck = isPathAllowed(path);
+
+      if (level >= LEVEL_THRESHOLD && !isPathAllowedCheck) {
+        return createDehydrated(type, true, data, cleaned, path);
+      }
+
+      const value: Unserializable = {
+        unserializable: true,
+        type,
+        readonly: true,
+        preview_short: formatDataForPreview(data, false),
+        preview_long: formatDataForPreview(data, true),
+        name:
+          typeof data.constructor !== 'function' ||
+          typeof data.constructor.name !== 'string'
+            ? ''
+            : data.constructor.name,
+      };
+
+      getAllEnumerableKeys(data).forEach(key => {
+        const keyAsString = key.toString();
+
+        value[keyAsString] = dehydrate(
+          data[key],
+          cleaned,
+          unserializable,
+          path.concat([keyAsString]),
+          isPathAllowed,
+          isPathAllowedCheck ? 1 : level + 1,
+        );
+      });
+
+      unserializable.push(path);
+
+      return value;
+    }
+    case 'error': {
+      isPathAllowedCheck = isPathAllowed(path);
+
+      if (level >= LEVEL_THRESHOLD && !isPathAllowedCheck) {
+        return createDehydrated(type, true, data, cleaned, path);
+      }
+
+      const value: Unserializable = {
+        unserializable: true,
+        type,
+        readonly: true,
+        preview_short: formatDataForPreview(data, false),
+        preview_long: formatDataForPreview(data, true),
+        name: data.name,
+      };
+
+      // name, message, stack and cause are not enumerable yet still interesting.
+      value.message = dehydrate(
+        data.message,
+        cleaned,
+        unserializable,
+        path.concat(['message']),
+        isPathAllowed,
+        isPathAllowedCheck ? 1 : level + 1,
+      );
+      value.stack = dehydrate(
+        data.stack,
+        cleaned,
+        unserializable,
+        path.concat(['stack']),
+        isPathAllowed,
+        isPathAllowedCheck ? 1 : level + 1,
+      );
+
+      if ('cause' in data) {
+        value.cause = dehydrate(
+          data.cause,
+          cleaned,
+          unserializable,
+          path.concat(['cause']),
+          isPathAllowed,
+          isPathAllowedCheck ? 1 : level + 1,
+        );
+      }
+
+      getAllEnumerableKeys(data).forEach(key => {
+        const keyAsString = key.toString();
+
+        value[keyAsString] = dehydrate(
+          data[key],
+          cleaned,
+          unserializable,
+          path.concat([keyAsString]),
+          isPathAllowed,
+          isPathAllowedCheck ? 1 : level + 1,
+        );
+      });
+
+      unserializable.push(path);
+
+      return value;
+    }
     case 'infinity':
     case 'nan':
     case 'undefined':
       // Some values are lossy when sent through a WebSocket.
       // We dehydrate+rehydrate them to preserve their type.
       cleaned.push(path);
-      return {
-        type,
-      };
+      return {type};
 
     default:
       return data;
   }
 }
 
+function dehydrateKey(
+  parent: Object,
+  key: number | string | symbol,
+  cleaned: Array<Array<string | number>>,
+  unserializable: Array<Array<string | number>>,
+  path: Array<string | number>,
+  isPathAllowed: (path: Array<string | number>) => boolean,
+  level: number = 0,
+): $PropertyType<DehydratedData, 'data'> {
+  try {
+    return dehydrate(
+      parent[key],
+      cleaned,
+      unserializable,
+      path,
+      isPathAllowed,
+      level,
+    );
+  } catch (error) {
+    let preview = '';
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      typeof error.stack === 'string'
+    ) {
+      preview = error.stack;
+    } else if (typeof error === 'string') {
+      preview = error;
+    }
+    cleaned.push(path);
+    return {
+      inspectable: false,
+      preview_short: '[Exception]',
+      preview_long: preview ? '[Exception: ' + preview + ']' : '[Exception]',
+      name: preview,
+      type: 'unknown',
+    };
+  }
+}
+
 export function fillInPath(
   object: Object,
   data: DehydratedData,
-  path: Array<string | number>,
+  path: InspectedElementPath,
   value: any,
 ) {
   const target = getInObject(object, path);
@@ -367,7 +601,9 @@ export function hydrate(
 
     const value = parent[last];
 
-    if (value.type === 'infinity') {
+    if (!value) {
+      return;
+    } else if (value.type === 'infinity') {
       parent[last] = Infinity;
     } else if (value.type === 'nan') {
       parent[last] = NaN;
@@ -375,7 +611,7 @@ export function hydrate(
       parent[last] = undefined;
     } else {
       // Replace the string keys with Symbols so they're non-enumerable.
-      const replaced: {[key: Symbol]: boolean | string} = {};
+      const replaced: {[key: symbol]: boolean | string} = {};
       replaced[meta.inspectable] = !!value.inspectable;
       replaced[meta.inspected] = false;
       replaced[meta.name] = value.name;
@@ -411,41 +647,49 @@ export function hydrate(
 
 function upgradeUnserializable(destination: Object, source: Object) {
   Object.defineProperties(destination, {
+    // $FlowFixMe[invalid-computed-prop]
     [meta.inspected]: {
       configurable: true,
       enumerable: false,
       value: !!source.inspected,
     },
+    // $FlowFixMe[invalid-computed-prop]
     [meta.name]: {
       configurable: true,
       enumerable: false,
       value: source.name,
     },
+    // $FlowFixMe[invalid-computed-prop]
     [meta.preview_long]: {
       configurable: true,
       enumerable: false,
       value: source.preview_long,
     },
+    // $FlowFixMe[invalid-computed-prop]
     [meta.preview_short]: {
       configurable: true,
       enumerable: false,
       value: source.preview_short,
     },
+    // $FlowFixMe[invalid-computed-prop]
     [meta.size]: {
       configurable: true,
       enumerable: false,
       value: source.size,
     },
+    // $FlowFixMe[invalid-computed-prop]
     [meta.readonly]: {
       configurable: true,
       enumerable: false,
       value: !!source.readonly,
     },
+    // $FlowFixMe[invalid-computed-prop]
     [meta.type]: {
       configurable: true,
       enumerable: false,
       value: source.type,
     },
+    // $FlowFixMe[invalid-computed-prop]
     [meta.unserializable]: {
       configurable: true,
       enumerable: false,

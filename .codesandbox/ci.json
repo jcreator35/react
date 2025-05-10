@@ -1,10 +1,13 @@
 {
-  "packages": ["packages/react", "packages/react-dom", "packages/scheduler"],
-  "buildCommand": "build --type=NODE react/index,react-dom/index,scheduler/index,scheduler/tracing",
+  "packages": ["packages/react", "packages/react-dom", "packages/react-server-dom-webpack", "packages/scheduler"],
+  "buildCommand": "download-build-in-codesandbox-ci",
+  "node": "18",
   "publishDirectory": {
-    "react": "build/node_modules/react",
-    "react-dom": "build/node_modules/react-dom",
-    "scheduler": "build/node_modules/scheduler"
+    "react": "build/oss-experimental/react",
+    "react-dom": "build/oss-experimental/react-dom",
+    "react-server-dom-webpack": "build/oss-experimental/react-server-dom-webpack",
+    "scheduler": "build/oss-experimental/scheduler"
   },
-  "sandboxes": ["new"]
+  "sandboxes": ["new"],
+  "silent": true
 }

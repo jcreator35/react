@@ -1,20 +1,30 @@
-import React, {useContext} from 'react';
-import {RegistryContext} from './Contexts';
+/**
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ *
+ * @flow
+ */
+
+import * as React from 'react';
 
 import styles from './ContextMenuItem.css';
 
-type Props = {|
-  children: React$Node,
-  onClick: Object => void,
-  title: string,
-|};
+type Props = {
+  children: React.Node,
+  onClick: () => void,
+  hide: () => void,
+};
 
-export default function ContextMenuItem({children, onClick, title}: Props) {
-  const {hideMenu} = useContext(RegistryContext);
-
-  const handleClick = event => {
+export default function ContextMenuItem({
+  children,
+  onClick,
+  hide,
+}: Props): React.Node {
+  const handleClick = () => {
     onClick();
-    hideMenu();
+    hide();
   };
 
   return (

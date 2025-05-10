@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,9 +9,9 @@
 
 import Agent from 'react-devtools-shared/src/backend/agent';
 import {destroy as destroyCanvas, draw} from './canvas';
-import {getNestedBoundingClientRect} from '../utils';
+import {extractHOCNames, getNestedBoundingClientRect} from '../utils';
 
-import type {NativeType} from '../../types';
+import type {HostInstance} from '../../types';
 import type {Rect} from '../utils';
 
 // How long the rect should be shown for?
@@ -24,20 +24,28 @@ const MAX_DISPLAY_DURATION = 3000;
 // How long should a rect be considered valid for?
 const REMEASUREMENT_AFTER_DURATION = 250;
 
-// Some environments (e.g. React Native / Hermes) don't support the performace API yet.
+// Markers for different types of HOCs
+const HOC_MARKERS = new Map([
+  ['Forget', '✨'],
+  ['Memo', '🧠'],
+]);
+
+// Some environments (e.g. React Native / Hermes) don't support the performance API yet.
 const getCurrentTime =
+  // $FlowFixMe[method-unbinding]
   typeof performance === 'object' && typeof performance.now === 'function'
     ? () => performance.now()
     : () => Date.now();
 
-export type Data = {|
+export type Data = {
   count: number,
   expirationTime: number,
   lastMeasuredAt: number,
   rect: Rect | null,
-|};
+  displayName: string | null,
+};
 
-const nodeToData: Map<NativeType, Data> = new Map();
+const nodeToData: Map<HostInstance, Data> = new Map();
 
 let agent: Agent = ((null: any): Agent);
 let drawAnimationFrameID: AnimationFrameID | null = null;
@@ -65,14 +73,12 @@ export function toggleEnabled(value: boolean): void {
       redrawTimeoutID = null;
     }
 
-    destroyCanvas();
+    destroyCanvas(agent);
   }
 }
 
-function traceUpdates(nodes: Set<NativeType>): void {
-  if (!isEnabled) {
-    return;
-  }
+function traceUpdates(nodes: Set<HostInstance>): void {
+  if (!isEnabled) return;
 
   nodes.forEach(node => {
     const data = nodeToData.get(node);
@@ -80,9 +86,23 @@ function traceUpdates(nodes: Set<NativeType>): void {
 
     let lastMeasuredAt = data != null ? data.lastMeasuredAt : 0;
     let rect = data != null ? data.rect : null;
+
     if (rect === null || lastMeasuredAt + REMEASUREMENT_AFTER_DURATION < now) {
       lastMeasuredAt = now;
       rect = measureNode(node);
+    }
+
+    let displayName = agent.getComponentNameForHostInstance(node);
+    if (displayName) {
+      const {baseComponentName, hocNames} = extractHOCNames(displayName);
+
+      const markers = hocNames.map(hoc => HOC_MARKERS.get(hoc) || '').join('');
+
+      const enhancedDisplayName = markers
+        ? `${markers}${baseComponentName}`
+        : baseComponentName;
+
+      displayName = enhancedDisplayName;
     }
 
     nodeToData.set(node, {
@@ -96,6 +116,7 @@ function traceUpdates(nodes: Set<NativeType>): void {
           : now + DISPLAY_DURATION,
       lastMeasuredAt,
       rect,
+      displayName,
     });
   });
 
@@ -125,9 +146,11 @@ function prepareToDraw(): void {
     }
   });
 
-  draw(nodeToData);
+  draw(nodeToData, agent);
 
-  redrawTimeoutID = setTimeout(prepareToDraw, earliestExpiration - now);
+  if (earliestExpiration !== Number.MAX_VALUE) {
+    redrawTimeoutID = setTimeout(prepareToDraw, earliestExpiration - now);
+  }
 }
 
 function measureNode(node: Object): Rect | null {
@@ -135,7 +158,7 @@ function measureNode(node: Object): Rect | null {
     return null;
   }
 
-  let currentWindow = window.__REACT_DEVTOOLS_TARGET_WINDOW__ || window;
+  const currentWindow = window.__REACT_DEVTOOLS_TARGET_WINDOW__ || window;
 
   return getNestedBoundingClientRect(node, currentWindow);
 }

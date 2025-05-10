@@ -1,8 +1,10 @@
-import React, {Component} from 'react';
+import React, {Component, Suspense, startTransition} from 'react';
 
 import Theme, {ThemeToggleButton} from './Theme';
 
 import './Chrome.css';
+
+import LargeContent from './LargeContent';
 
 export default class Chrome extends Component {
   state = {theme: 'light'};
@@ -23,27 +25,26 @@ export default class Chrome extends Component {
               __html: `<b>Enable JavaScript to run this app.</b>`,
             }}
           />
-          <Theme.Provider value={this.state.theme}>
-            {this.props.children}
-            <div>
-              <ThemeToggleButton
-                onChange={theme => {
-                  React.unstable_withSuspenseConfig(
-                    () => {
+          <Suspense fallback="Loading...">
+            <Theme.Provider value={this.state.theme}>
+              <div>
+                <ThemeToggleButton
+                  onChange={theme => {
+                    startTransition(() => {
                       this.setState({theme});
-                    },
-                    {timeoutMs: 6000}
-                  );
-                }}
-              />
-            </div>
-          </Theme.Provider>
+                    });
+                  }}
+                />
+              </div>
+              {this.props.children}
+            </Theme.Provider>
+          </Suspense>
+          <LargeContent />
           <script
             dangerouslySetInnerHTML={{
               __html: `assetManifest = ${JSON.stringify(assets)};`,
             }}
           />
-          <script src={assets['main.js']} />
         </body>
       </html>
     );

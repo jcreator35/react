@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -24,8 +24,8 @@ export type ReactNodeList = ReactEmpty | React$Node;
 export type ReactText = string | number;
 
 export type ReactProvider<T> = {
-  $$typeof: Symbol | number,
-  type: ReactProviderType<T>,
+  $$typeof: symbol | number,
+  type: ReactContext<T>,
   key: null | string,
   ref: null,
   props: {
@@ -34,40 +34,38 @@ export type ReactProvider<T> = {
   },
 };
 
-export type ReactProviderType<T> = {
-  $$typeof: Symbol | number,
+export type ReactConsumerType<T> = {
+  $$typeof: symbol | number,
   _context: ReactContext<T>,
 };
 
 export type ReactConsumer<T> = {
-  $$typeof: Symbol | number,
-  type: ReactContext<T>,
+  $$typeof: symbol | number,
+  type: ReactConsumerType<T>,
   key: null | string,
   ref: null,
   props: {
     children: (value: T) => ReactNodeList,
-    unstable_observedBits?: number,
   },
 };
 
 export type ReactContext<T> = {
-  $$typeof: Symbol | number,
-  Consumer: ReactContext<T>,
-  Provider: ReactProviderType<T>,
-
-  _calculateChangedBits: ((a: T, b: T) => number) | null,
-
+  $$typeof: symbol | number,
+  Consumer: ReactConsumerType<T>,
+  Provider: ReactContext<T>,
   _currentValue: T,
   _currentValue2: T,
   _threadCount: number,
-
   // DEV only
   _currentRenderer?: Object | null,
   _currentRenderer2?: Object | null,
+  // This value may be added by application code
+  // to improve DEV tooling display names
+  displayName?: string,
 };
 
 export type ReactPortal = {
-  $$typeof: Symbol | number,
+  $$typeof: symbol | number,
   key: null | string,
   containerInfo: any,
   children: ReactNodeList,
@@ -75,109 +73,249 @@ export type ReactPortal = {
   implementation: any,
 };
 
-export type RefObject = {|
+export type RefObject = {
   current: any,
-|};
-
-export type ReactEventResponderInstance<E, C> = {|
-  fiber: Object,
-  props: Object,
-  responder: ReactEventResponder<E, C>,
-  rootEventTypes: null | Set<string>,
-  state: Object,
-|};
-
-export type ReactEventResponderListener<E, C> = {|
-  props: Object,
-  responder: ReactEventResponder<E, C>,
-|};
-
-export type ReactEventResponder<E, C> = {
-  $$typeof: Symbol | number,
-  displayName: string,
-  targetEventTypes: null | Array<string>,
-  targetPortalPropagation: boolean,
-  getInitialState: null | ((props: Object) => Object),
-  onEvent:
-    | null
-    | ((event: E, context: C, props: Object, state: Object) => void),
-  onRootEvent:
-    | null
-    | ((event: E, context: C, props: Object, state: Object) => void),
-  onMount: null | ((context: C, props: Object, state: Object) => void),
-  onUnmount: null | ((context: C, props: Object, state: Object) => void),
 };
 
-export type EventPriority = 0 | 1 | 2;
+export type ReactScope = {
+  $$typeof: symbol | number,
+};
 
-export const DiscreteEvent: EventPriority = 0;
-export const UserBlockingEvent: EventPriority = 1;
-export const ContinuousEvent: EventPriority = 2;
-
-export type ReactFundamentalComponentInstance<C, H> = {|
-  currentFiber: mixed,
+export type ReactScopeQuery = (
+  type: string,
+  props: {[string]: mixed},
   instance: mixed,
-  prevProps: null | Object,
-  props: Object,
-  impl: ReactFundamentalImpl<C, H>,
-  state: Object,
-|};
+) => boolean;
 
-export type ReactFundamentalImpl<C, H> = {
-  displayName: string,
-  reconcileChildren: boolean,
-  getInitialState?: (props: Object) => Object,
-  getInstance: (context: C, props: Object, state: Object) => H,
-  getServerSideString?: (context: C, props: Object) => string,
-  getServerSideStringClose?: (context: C, props: Object) => string,
-  onMount: (context: C, instance: mixed, props: Object, state: Object) => void,
-  shouldUpdate?: (
-    context: C,
-    prevProps: null | Object,
-    nextProps: Object,
-    state: Object,
-  ) => boolean,
-  onUpdate?: (
-    context: C,
-    instance: mixed,
-    prevProps: null | Object,
-    nextProps: Object,
-    state: Object,
-  ) => void,
-  onUnmount?: (
-    context: C,
-    instance: mixed,
-    props: Object,
-    state: Object,
-  ) => void,
-  onHydrate?: (context: C, props: Object, state: Object) => boolean,
-  onFocus?: (context: C, props: Object, state: Object) => boolean,
+export type ReactScopeInstance = {
+  DO_NOT_USE_queryAllNodes(ReactScopeQuery): null | Array<Object>,
+  DO_NOT_USE_queryFirstNode(ReactScopeQuery): null | Object,
+  containsNode(Object): boolean,
+  getChildContextValues: <T>(context: ReactContext<T>) => Array<T>,
 };
 
-export type ReactFundamentalComponent<C, H> = {|
-  $$typeof: Symbol | number,
-  impl: ReactFundamentalImpl<C, H>,
-|};
+// The subset of a Thenable required by things thrown by Suspense.
+// This doesn't require a value to be passed to either handler.
+export interface Wakeable {
+  then(onFulfill: () => mixed, onReject: () => mixed): void | Wakeable;
+}
 
-export type ReactScope = {|
-  $$typeof: Symbol | number,
-|};
+// The subset of a Promise that React APIs rely on. This resolves a value.
+// This doesn't require a return value neither from the handler nor the
+// then function.
+interface ThenableImpl<T> {
+  then(
+    onFulfill: (value: T) => mixed,
+    onReject: (error: mixed) => mixed,
+  ): void | Wakeable;
+}
+interface UntrackedThenable<T> extends ThenableImpl<T> {
+  status?: void;
+  _debugInfo?: null | ReactDebugInfo;
+}
 
-export type ReactScopeMethods = {|
-  getChildren(): null | Array<ReactScopeMethods>,
-  getChildrenFromRoot(): null | Array<ReactScopeMethods>,
-  getParent(): null | ReactScopeMethods,
-  getProps(): Object,
-  queryAllNodes(
-    (type: string | Object, props: Object, instance: Object) => boolean,
-  ): null | Array<Object>,
-  queryFirstNode(
-    (type: string | Object, props: Object, instance: Object) => boolean,
-  ): null | Object,
-  containsNode(Object): boolean,
-|};
+export interface PendingThenable<T> extends ThenableImpl<T> {
+  status: 'pending';
+  _debugInfo?: null | ReactDebugInfo;
+}
 
-export type ReactScopeInstance = {|
-  fiber: Object,
-  methods: null | ReactScopeMethods,
-|};
+export interface FulfilledThenable<T> extends ThenableImpl<T> {
+  status: 'fulfilled';
+  value: T;
+  _debugInfo?: null | ReactDebugInfo;
+}
+
+export interface RejectedThenable<T> extends ThenableImpl<T> {
+  status: 'rejected';
+  reason: mixed;
+  _debugInfo?: null | ReactDebugInfo;
+}
+
+export type Thenable<T> =
+  | UntrackedThenable<T>
+  | PendingThenable<T>
+  | FulfilledThenable<T>
+  | RejectedThenable<T>;
+
+export type StartTransitionOptions = {
+  name?: string,
+};
+
+export type Usable<T> = Thenable<T> | ReactContext<T>;
+
+export type ReactCustomFormAction = {
+  name?: string,
+  action?: string,
+  encType?: string,
+  method?: string,
+  target?: string,
+  data?: null | FormData,
+};
+
+// This is an opaque type returned by decodeFormState on the server, but it's
+// defined in this shared file because the same type is used by React on
+// the client.
+export type ReactFormState<S, ReferenceId> = [
+  S /* actual state value */,
+  string /* key path */,
+  ReferenceId /* Server Reference ID */,
+  number /* number of bound arguments */,
+];
+
+// Intrinsic GestureProvider. This type varies by Environment whether a particular
+// renderer supports it.
+export type GestureProvider = any;
+
+export type GestureOptions = {
+  rangeStart?: number,
+  rangeEnd?: number,
+};
+
+export type Awaited<T> = T extends null | void
+  ? T // special case for `null | undefined` when not in `--strictNullChecks` mode
+  : T extends Object // `await` only unwraps object types with a callable then. Non-object types are not unwrapped.
+    ? T extends {then(onfulfilled: infer F): any} // thenable, extracts the first argument to `then()`
+      ? F extends (value: infer V) => any // if the argument to `then` is callable, extracts the argument
+        ? Awaited<V> // recursively unwrap the value
+        : empty // the argument to `then` was not callable.
+      : T // argument was not an object
+    : T; // non-thenable
+
+export type ReactCallSite = [
+  string, // function name
+  string, // file name TODO: model nested eval locations as nested arrays
+  number, // line number
+  number, // column number
+  number, // enclosing line number
+  number, // enclosing column number
+];
+
+export type ReactStackTrace = Array<ReactCallSite>;
+
+export type ReactFunctionLocation = [
+  string, // function name
+  string, // file name TODO: model nested eval locations as nested arrays
+  number, // enclosing line number
+  number, // enclosing column number
+];
+
+export type ReactComponentInfo = {
+  +name: string,
+  +env?: string,
+  +key?: null | string,
+  +owner?: null | ReactComponentInfo,
+  +stack?: null | ReactStackTrace,
+  +props?: null | {[name: string]: mixed},
+  // Stashed Data for the Specific Execution Environment. Not part of the transport protocol
+  +debugStack?: null | Error,
+  +debugTask?: null | ConsoleTask,
+};
+
+export type ReactEnvironmentInfo = {
+  +env: string,
+};
+
+export type ReactErrorInfoProd = {
+  +digest: string,
+};
+
+export type ReactErrorInfoDev = {
+  +digest?: string,
+  +name: string,
+  +message: string,
+  +stack: ReactStackTrace,
+  +env: string,
+};
+
+export type ReactErrorInfo = ReactErrorInfoProd | ReactErrorInfoDev;
+
+export type ReactAsyncInfo = {
+  +type: string,
+  // Stashed Data for the Specific Execution Environment. Not part of the transport protocol
+  +debugStack?: null | Error,
+  +debugTask?: null | ConsoleTask,
+  +stack?: null | ReactStackTrace,
+};
+
+export type ReactTimeInfo = {
+  +time: number, // performance.now
+};
+
+export type ReactDebugInfo = Array<
+  ReactComponentInfo | ReactEnvironmentInfo | ReactAsyncInfo | ReactTimeInfo,
+>;
+
+// Intrinsic ViewTransitionInstance. This type varies by Environment whether a particular
+// renderer supports it.
+export type ViewTransitionInstance = any;
+
+export type ViewTransitionClassPerType = {
+  [transitionType: 'default' | string]: 'none' | 'auto' | string,
+};
+
+export type ViewTransitionClass =
+  | 'none'
+  | 'auto'
+  | string
+  | ViewTransitionClassPerType;
+
+export type ViewTransitionProps = {
+  name?: string,
+  children?: ReactNodeList,
+  default?: ViewTransitionClass,
+  enter?: ViewTransitionClass,
+  exit?: ViewTransitionClass,
+  share?: ViewTransitionClass,
+  update?: ViewTransitionClass,
+  onEnter?: (instance: ViewTransitionInstance, types: Array<string>) => void,
+  onExit?: (instance: ViewTransitionInstance, types: Array<string>) => void,
+  onShare?: (instance: ViewTransitionInstance, types: Array<string>) => void,
+  onUpdate?: (instance: ViewTransitionInstance, types: Array<string>) => void,
+};
+
+export type ActivityProps = {
+  mode?: 'hidden' | 'visible' | null | void,
+  children?: ReactNodeList,
+};
+
+export type SuspenseProps = {
+  children?: ReactNodeList,
+  fallback?: ReactNodeList,
+
+  // TODO: Add "unstable_" prefix?
+  suspenseCallback?: (Set<Wakeable> | null) => mixed,
+
+  unstable_avoidThisFallback?: boolean,
+  unstable_expectedLoadTime?: number,
+  name?: string,
+};
+
+export type TracingMarkerProps = {
+  name: string,
+  children?: ReactNodeList,
+};
+
+export type CacheProps = {
+  children?: ReactNodeList,
+};
+
+export type ProfilerPhase = 'mount' | 'update' | 'nested-update';
+
+export type ProfilerProps = {
+  id?: string,
+  onRender?: (
+    id: void | string,
+    phase: ProfilerPhase,
+    actualDuration: number,
+    baseDuration: number,
+    startTime: number,
+    commitTime: number,
+  ) => void,
+  onCommit?: (
+    id: void | string,
+    phase: ProfilerPhase,
+    effectDuration: number,
+    commitTime: number,
+  ) => void,
+  children?: ReactNodeList,
+};

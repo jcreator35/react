@@ -64,7 +64,10 @@ import {captureCommitPhaseError} from './ReactFiberWorkLoop';
 import {trackHostMutation} from './ReactFiberMutationTracking';
 
 import {runWithFiberInDEV} from './ReactCurrentFiber';
-import {enableFragmentRefs} from 'shared/ReactFeatureFlags';
+import {
+  enableFragmentRefs,
+  enableFragmentRefsTextNodes,
+} from 'shared/ReactFeatureFlags';
 
 export function commitHostMount(finishedWork: Fiber) {
   const type = finishedWork.type;
@@ -255,8 +258,17 @@ export function commitShowHideHostTextInstance(node: Fiber, isHidden: boolean) {
 
 export function commitNewChildToFragmentInstances(
   fiber: Fiber,
-  parentFragmentInstances: Array<FragmentInstanceType>,
+  parentFragmentInstances: null | Array<FragmentInstanceType>,
 ): void {
+  if (
+    (fiber.tag !== HostComponent &&
+      !(enableFragmentRefsTextNodes && fiber.tag === HostText)) ||
+    // Only run fragment insertion effects for initial insertions
+    fiber.alternate !== null ||
+    parentFragmentInstances === null
+  ) {
+    return;
+  }
   for (let i = 0; i < parentFragmentInstances.length; i++) {
     const fragmentInstance = parentFragmentInstances[i];
     commitNewChildToFragmentInstance(fiber.stateNode, fragmentInstance);
@@ -299,7 +311,9 @@ function isHostParent(fiber: Fiber): boolean {
   return (
     fiber.tag === HostComponent ||
     fiber.tag === HostRoot ||
+    // $FlowFixMe[constant-condition]
     (supportsResources ? fiber.tag === HostHoistable : false) ||
+    // $FlowFixMe[constant-condition]
     (supportsSingletons
       ? fiber.tag === HostSingleton && isSingletonScope(fiber.type)
       : false) ||
@@ -339,6 +353,7 @@ function getHostSibling(fiber: Fiber): ?Instance {
       // singleton scope. If it is a singleton scope we skip over it because
       // you only insert against this scope when you are already inside of it
       if (
+        // $FlowFixMe[constant-condition]
         supportsSingletons &&
         node.tag === HostSingleton &&
         isSingletonScope(node.type)
@@ -384,14 +399,7 @@ function insertOrAppendPlacementNodeIntoContainer(
     } else {
       appendChildToContainer(parent, stateNode);
     }
-    // TODO: Enable HostText for RN
-    if (
-      enableFragmentRefs &&
-      tag === HostComponent &&
-      // Only run fragment insertion effects for initial insertions
-      node.alternate === null &&
-      parentFragmentInstances !== null
-    ) {
+    if (enableFragmentRefs) {
       commitNewChildToFragmentInstances(node, parentFragmentInstances);
     }
     trackHostMutation();
@@ -404,6 +412,7 @@ function insertOrAppendPlacementNodeIntoContainer(
   }
 
   if (
+    // $FlowFixMe[constant-condition]
     (supportsSingletons ? tag === HostSingleton : false) &&
     isSingletonScope(node.type)
   ) {
@@ -449,14 +458,7 @@ function insertOrAppendPlacementNode(
     } else {
       appendChild(parent, stateNode);
     }
-    // TODO: Enable HostText for RN
-    if (
-      enableFragmentRefs &&
-      tag === HostComponent &&
-      // Only run fragment insertion effects for initial insertions
-      node.alternate === null &&
-      parentFragmentInstances !== null
-    ) {
+    if (enableFragmentRefs) {
       commitNewChildToFragmentInstances(node, parentFragmentInstances);
     }
     trackHostMutation();
@@ -469,6 +471,7 @@ function insertOrAppendPlacementNode(
   }
 
   if (
+    // $FlowFixMe[constant-condition]
     (supportsSingletons ? tag === HostSingleton : false) &&
     isSingletonScope(node.type)
   ) {
@@ -494,10 +497,6 @@ function insertOrAppendPlacementNode(
 }
 
 function commitPlacement(finishedWork: Fiber): void {
-  if (!supportsMutation) {
-    return;
-  }
-
   // Recursively insert all host nodes into the parent.
   let hostParentFiber;
   let parentFragmentInstances = null;
@@ -517,6 +516,18 @@ function commitPlacement(finishedWork: Fiber): void {
     }
     parentFiber = parentFiber.return;
   }
+
+  // $FlowFixMe[constant-condition]
+  if (!supportsMutation) {
+    if (enableFragmentRefs) {
+      commitImmutablePlacementNodeToFragmentInstances(
+        finishedWork,
+        parentFragmentInstances,
+      );
+    }
+    return;
+  }
+
   if (hostParentFiber == null) {
     throw new Error(
       'Expected to find a host parent. This error is likely caused by a bug ' +
@@ -526,6 +537,7 @@ function commitPlacement(finishedWork: Fiber): void {
 
   switch (hostParentFiber.tag) {
     case HostSingleton: {
+      // $FlowFixMe[constant-condition]
       if (supportsSingletons) {
         const parent: Instance = hostParentFiber.stateNode;
         const before = getHostSibling(finishedWork);
@@ -578,6 +590,41 @@ function commitPlacement(finishedWork: Fiber): void {
         'Invalid host parent fiber. This error is likely caused by a bug ' +
           'in React. Please file an issue.',
       );
+  }
+}
+
+function commitImmutablePlacementNodeToFragmentInstances(
+  finishedWork: Fiber,
+  parentFragmentInstances: null | Array<FragmentInstanceType>,
+): void {
+  if (!enableFragmentRefs) {
+    return;
+  }
+  const isHost = finishedWork.tag === HostComponent;
+  if (isHost) {
+    commitNewChildToFragmentInstances(finishedWork, parentFragmentInstances);
+    return;
+  } else if (finishedWork.tag === HostPortal) {
+    // If the insertion itself is a portal, then we don't want to traverse
+    // down its children. Instead, we'll get insertions from each child in
+    // the portal directly.
+    return;
+  }
+
+  const child = finishedWork.child;
+  if (child !== null) {
+    commitImmutablePlacementNodeToFragmentInstances(
+      child,
+      parentFragmentInstances,
+    );
+    let sibling = child.sibling;
+    while (sibling !== null) {
+      commitImmutablePlacementNodeToFragmentInstances(
+        sibling,
+        parentFragmentInstances,
+      );
+      sibling = sibling.sibling;
+    }
   }
 }
 

@@ -12,11 +12,18 @@ import type {
   PendingThenable,
   FulfilledThenable,
   RejectedThenable,
+  ReactIOInfo,
 } from 'shared/ReactTypes';
+
+import type {LazyComponent as LazyComponentType} from 'react/src/ReactLazy';
+
+import {callLazyInitInDEV} from './ReactFiberCallUserSpace';
 
 import {getWorkInProgressRoot} from './ReactFiberWorkLoop';
 
 import ReactSharedInternals from 'shared/ReactSharedInternals';
+
+import {enableAsyncDebugInfo} from 'shared/ReactFeatureFlags';
 
 import noop from 'shared/noop';
 
@@ -31,10 +38,10 @@ export opaque type ThenableState = ThenableStateDev | ThenableStateProd;
 
 function getThenablesFromState(state: ThenableState): Array<Thenable<any>> {
   if (__DEV__) {
-    const devState: ThenableStateDev = (state: any);
+    const devState: ThenableStateDev = state as any;
     return devState.thenables;
   } else {
-    const prodState = (state: any);
+    const prodState = state as any;
     return prodState;
   }
 }
@@ -115,7 +122,7 @@ export function trackUsedThenable<T>(
       // they represent the same value, because components are idempotent.
 
       if (__DEV__) {
-        const thenableStateDev: ThenableStateDev = (thenableState: any);
+        const thenableStateDev: ThenableStateDev = thenableState as any;
         if (!thenableStateDev.didWarnAboutUncachedPromise) {
           // We should only warn the first time an uncached thenable is
           // discovered per component, because if there are multiple, the
@@ -150,6 +157,33 @@ export function trackUsedThenable<T>(
     }
   }
 
+  if (__DEV__ && enableAsyncDebugInfo && thenable._debugInfo === undefined) {
+    // In DEV mode if the thenable that we observed had no debug info, then we add
+    // an inferred debug info so that we're able to track its potential I/O uniquely.
+    // We don't know the real start time since the I/O could have started much
+    // earlier and this could even be a cached Promise. Could be misleading.
+    const startTime = performance.now();
+    const displayName = thenable.displayName;
+    const ioInfo: ReactIOInfo = {
+      name: typeof displayName === 'string' ? displayName : 'Promise',
+      start: startTime,
+      end: startTime,
+      value: thenable as any,
+      // We don't know the requesting owner nor stack.
+    };
+    // We can infer the await owner/stack lazily from where this promise ends up
+    // used. It can be used in more than one place so we can't assign it here.
+    thenable._debugInfo = [{awaited: ioInfo}];
+    // Track when we resolved the Promise as the approximate end time.
+    if (thenable.status !== 'fulfilled' && thenable.status !== 'rejected') {
+      const trackEndTime = () => {
+        // $FlowFixMe[cannot-write]
+        ioInfo.end = performance.now();
+      };
+      thenable.then(trackEndTime, trackEndTime);
+    }
+  }
+
   // We use an expando to track the status and result of a thenable so that we
   // can synchronously unwrap the value. Think of this as an extension of the
   // Promise API, or a custom interface that is a superset of Thenable.
@@ -158,12 +192,30 @@ export function trackUsedThenable<T>(
   // a listener that will update its status and result when it resolves.
   switch (thenable.status) {
     case 'fulfilled': {
+      // This could be a bad instrumentation that doesn't set .value.
+      // We're not type-checking since this is a hot path where you can
+      // track down easily when something becomes `undefined` unexpectedly.
       const fulfilledValue: T = thenable.value;
       return fulfilledValue;
     }
     case 'rejected': {
       const rejectedError = thenable.reason;
       checkIfUseWrappedInAsyncCatch(rejectedError);
+
+      // Rejected Promises are rarer so we're doing an extra type-check in
+      // case of a bad instrumentation that doesn't set .reason
+      // If we end up throwing `undefined` it becomes hard to track down
+      // where that throw originated because no callstack would exist.
+      // React would still have a Component stack but that could only be used
+      // as an approximation.
+      if (rejectedError === undefined && !('reason' in thenable)) {
+        throw new Error(
+          'A rejected Promise was passed to React without a `reason` property. ' +
+            'React threw a generic error from where the Promise was used to assist in identifying the problematic Promise. ' +
+            "Make sure that instrumented Promises correctly set the `reason` property when setting `status` to `'rejected'`.",
+        );
+      }
+
       throw rejectedError;
     }
     default: {
@@ -202,19 +254,19 @@ export function trackUsedThenable<T>(
           );
         }
 
-        const pendingThenable: PendingThenable<T> = (thenable: any);
+        const pendingThenable: PendingThenable<T> = thenable as any;
         pendingThenable.status = 'pending';
         pendingThenable.then(
           fulfilledValue => {
             if (thenable.status === 'pending') {
-              const fulfilledThenable: FulfilledThenable<T> = (thenable: any);
+              const fulfilledThenable: FulfilledThenable<T> = thenable as any;
               fulfilledThenable.status = 'fulfilled';
               fulfilledThenable.value = fulfilledValue;
             }
           },
           (error: mixed) => {
             if (thenable.status === 'pending') {
-              const rejectedThenable: RejectedThenable<T> = (thenable: any);
+              const rejectedThenable: RejectedThenable<T> = thenable as any;
               rejectedThenable.status = 'rejected';
               rejectedThenable.reason = error;
             }
@@ -223,13 +275,13 @@ export function trackUsedThenable<T>(
       }
 
       // Check one more time in case the thenable resolved synchronously.
-      switch ((thenable: Thenable<T>).status) {
+      switch ((thenable as Thenable<T>).status) {
         case 'fulfilled': {
-          const fulfilledThenable: FulfilledThenable<T> = (thenable: any);
+          const fulfilledThenable: FulfilledThenable<T> = thenable as any;
           return fulfilledThenable.value;
         }
         case 'rejected': {
-          const rejectedThenable: RejectedThenable<T> = (thenable: any);
+          const rejectedThenable: RejectedThenable<T> = thenable as any;
           const rejectedError = rejectedThenable.reason;
           checkIfUseWrappedInAsyncCatch(rejectedError);
           throw rejectedError;
@@ -256,8 +308,30 @@ export function suspendCommit(): void {
   // This extra indirection only exists so it can handle passing
   // noopSuspenseyCommitThenable through to throwException.
   // TODO: Factor the thenable check out of throwException
+  // $FlowFixMe[incompatible-type]
   suspendedThenable = noopSuspenseyCommitThenable;
   throw SuspenseyCommitException;
+}
+
+export function resolveLazy<T>(lazyType: LazyComponentType<T, any>): T {
+  try {
+    if (__DEV__) {
+      return callLazyInitInDEV(lazyType);
+    }
+    const payload = lazyType._payload;
+    const init = lazyType._init;
+    return init(payload);
+  } catch (x) {
+    if (x !== null && typeof x === 'object' && typeof x.then === 'function') {
+      // This lazy Suspended. Treat this as if we called use() to unwrap it.
+      suspendedThenable = x;
+      if (__DEV__) {
+        needsToResetSuspendedThenableDEV = true;
+      }
+      throw SuspenseException;
+    }
+    throw x;
+  }
 }
 
 // This is used to track the actual thenable that suspended so it can be

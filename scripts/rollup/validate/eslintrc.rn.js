@@ -14,6 +14,7 @@ module.exports = {
     Proxy: 'readonly',
     WeakMap: 'readonly',
     WeakSet: 'readonly',
+    WeakRef: 'readonly',
 
     Int8Array: 'readonly',
     Uint8Array: 'readonly',
@@ -35,6 +36,7 @@ module.exports = {
     FinalizationRegistry: 'readonly',
 
     ScrollTimeline: 'readonly',
+    navigation: 'readonly',
 
     // Vendor specific
     MSApp: 'readonly',
@@ -46,6 +48,7 @@ module.exports = {
     nativeFabricUIManager: 'readonly',
     // RN flag to enable microtasks
     RN$enableMicrotasksInReact: 'readonly',
+    RN$isNativeEventTargetEventDispatchingEnabled: 'readonly',
     // Trusted Types
     trustedTypes: 'readonly',
     // RN supports this

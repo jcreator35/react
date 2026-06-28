@@ -19,32 +19,19 @@ global.TextEncoder = require('util').TextEncoder;
 let React;
 let ReactDOMFizzServer;
 let Suspense;
-let Scheduler;
-let act;
+let serverAct;
 
 describe('ReactDOMFizzServerBrowser', () => {
   beforeEach(() => {
     jest.resetModules();
 
-    Scheduler = require('scheduler');
-    patchMessageChannel(Scheduler);
-    act = require('internal-test-utils').act;
+    patchMessageChannel();
+    serverAct = require('internal-test-utils').serverAct;
 
     React = require('react');
     ReactDOMFizzServer = require('react-dom/server.browser');
     Suspense = React.Suspense;
   });
-
-  async function serverAct(callback) {
-    let maybePromise;
-    await act(() => {
-      maybePromise = callback();
-      if (maybePromise && typeof maybePromise.catch === 'function') {
-        maybePromise.catch(() => {});
-      }
-    });
-    return maybePromise;
-  }
 
   const theError = new Error('This is an error');
   function Throw() {
@@ -84,9 +71,15 @@ describe('ReactDOMFizzServerBrowser', () => {
       ),
     );
     const result = await readResult(stream);
-    expect(result).toMatchInlineSnapshot(
-      `"<!DOCTYPE html><html><head><link rel="expect" href="#«R»" blocking="render"/></head><body>hello world<template id="«R»"></template></body></html>"`,
-    );
+    if (gate(flags => flags.enableFizzBlockingRender)) {
+      expect(result).toMatchInlineSnapshot(
+        `"<!DOCTYPE html><html><head><link rel="expect" href="#_R_" blocking="render"/></head><body>hello world<template id="_R_"></template></body></html>"`,
+      );
+    } else {
+      expect(result).toMatchInlineSnapshot(
+        `"<!DOCTYPE html><html><head></head><body>hello world</body></html>"`,
+      );
+    }
   });
 
   it('should emit bootstrap script src at the end', async () => {
@@ -99,7 +92,7 @@ describe('ReactDOMFizzServerBrowser', () => {
     );
     const result = await readResult(stream);
     expect(result).toMatchInlineSnapshot(
-      `"<link rel="preload" as="script" fetchPriority="low" href="init.js"/><link rel="modulepreload" fetchPriority="low" href="init.mjs"/><div>hello world</div><script id="«R»">INIT();</script><script src="init.js" async=""></script><script type="module" src="init.mjs" async=""></script>"`,
+      `"<link rel="preload" as="script" fetchPriority="low" href="init.js"/><link rel="modulepreload" fetchPriority="low" href="init.mjs"/><div>hello world</div><script id="_R_">INIT();</script><script src="init.js" async=""></script><script type="module" src="init.mjs" async=""></script>"`,
     );
   });
 
@@ -228,7 +221,9 @@ describe('ReactDOMFizzServerBrowser', () => {
       ),
     );
 
-    controller.abort();
+    await serverAct(() => {
+      controller.abort();
+    });
 
     const result = await readResult(stream);
     expect(result).toContain('Loading');
@@ -254,7 +249,9 @@ describe('ReactDOMFizzServerBrowser', () => {
     );
 
     const theReason = new Error('aborted for reasons');
-    controller.abort(theReason);
+    await serverAct(() => {
+      controller.abort(theReason);
+    });
 
     let caughtError = null;
     try {
@@ -371,7 +368,7 @@ describe('ReactDOMFizzServerBrowser', () => {
 
     const reader = stream.getReader();
     await reader.read();
-    await reader.cancel();
+    await serverAct(() => reader.cancel());
 
     expect(errors).toEqual([
       'The render was aborted by the server without a reason.',
@@ -470,7 +467,9 @@ describe('ReactDOMFizzServerBrowser', () => {
       }),
     );
 
-    controller.abort('foobar');
+    await serverAct(() => {
+      controller.abort('foobar');
+    });
 
     expect(errors).toEqual(['foobar', 'foobar']);
   });
@@ -509,7 +508,9 @@ describe('ReactDOMFizzServerBrowser', () => {
       }),
     );
 
-    controller.abort(new Error('uh oh'));
+    await serverAct(() => {
+      controller.abort(new Error('uh oh'));
+    });
 
     expect(errors).toEqual(['uh oh', 'uh oh']);
   });
@@ -529,7 +530,15 @@ describe('ReactDOMFizzServerBrowser', () => {
 
     const result = await readResult(stream);
     expect(result).toEqual(
-      '<!DOCTYPE html><html><head><link rel="expect" href="#«R»" blocking="render"/><title>foo</title></head><body>bar<template id="«R»"></template></body></html>',
+      '<!DOCTYPE html><html><head>' +
+        (gate(flags => flags.enableFizzBlockingRender)
+          ? '<link rel="expect" href="#_R_" blocking="render"/>'
+          : '') +
+        '<title>foo</title></head><body>bar' +
+        (gate(flags => flags.enableFizzBlockingRender)
+          ? '<template id="_R_"></template>'
+          : '') +
+        '</body></html>',
     );
   });
 
@@ -547,48 +556,7 @@ describe('ReactDOMFizzServerBrowser', () => {
     expect(result).toMatchInlineSnapshot(
       // TODO: remove interpolation because it prevents snapshot updates.
       // eslint-disable-next-line jest/no-interpolation-in-snapshots
-      `"<link rel="preload" as="script" fetchPriority="low" nonce="R4nd0m" href="init.js"/><link rel="modulepreload" fetchPriority="low" nonce="R4nd0m" href="init.mjs"/><div>hello world</div><script nonce="${nonce}" id="«R»">INIT();</script><script src="init.js" nonce="${nonce}" async=""></script><script type="module" src="init.mjs" nonce="${nonce}" async=""></script>"`,
+      `"<link rel="preload" as="script" fetchPriority="low" nonce="R4nd0m" href="init.js"/><link rel="modulepreload" fetchPriority="low" nonce="R4nd0m" href="init.mjs"/><div>hello world</div><script nonce="${nonce}" id="_R_">INIT();</script><script src="init.js" nonce="${nonce}" async=""></script><script type="module" src="init.mjs" nonce="${nonce}" async=""></script>"`,
     );
-  });
-
-  // @gate enablePostpone
-  it('errors if trying to postpone outside a Suspense boundary', async () => {
-    function Postponed() {
-      React.unstable_postpone('testing postpone');
-      return 'client only';
-    }
-
-    function App() {
-      return (
-        <div>
-          <Postponed />
-        </div>
-      );
-    }
-
-    const errors = [];
-    const postponed = [];
-
-    let caughtError = null;
-    try {
-      await serverAct(() =>
-        ReactDOMFizzServer.renderToReadableStream(<App />, {
-          onError(error) {
-            errors.push(error.message);
-          },
-          onPostpone(reason) {
-            postponed.push(reason);
-          },
-        }),
-      );
-    } catch (error) {
-      caughtError = error;
-    }
-
-    // Postponing is not logged as an error but as a postponed reason.
-    expect(errors).toEqual([]);
-    expect(postponed).toEqual(['testing postpone']);
-    // However, it does error the shell.
-    expect(caughtError.message).toEqual('testing postpone');
   });
 });

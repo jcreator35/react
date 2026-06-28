@@ -136,7 +136,6 @@ const babelToES5Plugins = [
   '@babel/plugin-transform-arrow-functions',
   '@babel/plugin-transform-block-scoped-functions',
   '@babel/plugin-transform-shorthand-properties',
-  '@babel/plugin-transform-computed-properties',
   ['@babel/plugin-transform-block-scoping', {throwIfClosureRequired: true}],
 ];
 
@@ -144,7 +143,6 @@ function getBabelConfig(
   updateBabelOptions,
   bundleType,
   packageName,
-  externals,
   isDevelopment,
   bundle
 ) {
@@ -354,7 +352,6 @@ function forbidFBJSImports() {
 
 function getPlugins(
   entry,
-  externals,
   updateBabelOptions,
   filename,
   packageName,
@@ -382,18 +379,20 @@ function getPlugins(
     return [
       // Keep dynamic imports as externals
       dynamicImports(),
-      bundle.tsconfig != null
-        ? typescript({tsconfig: bundle.tsconfig})
-        : {
-            name: 'rollup-plugin-flow-remove-types',
-            transform(code) {
-              const transformed = flowRemoveTypes(code);
-              return {
-                code: transformed.toString(),
-                map: null,
-              };
-            },
-          },
+      bundle.tsconfig != null ? typescript({tsconfig: bundle.tsconfig}) : false,
+      {
+        name: 'rollup-plugin-flow-remove-types',
+        transform(code, id) {
+          if (bundle.tsconfig != null && !id.endsWith('.js')) {
+            return null;
+          }
+          const transformed = flowRemoveTypes(code);
+          return {
+            code: transformed.toString(),
+            map: null,
+          };
+        },
+      },
       // See https://github.com/rollup/plugins/issues/1425
       bundle.tsconfig != null ? commonjs({strictRequires: true}) : false,
       // Shim any modules that need forking in this environment.
@@ -402,7 +401,8 @@ function getPlugins(
       forbidFBJSImports(),
       // Use Node resolution mechanism.
       resolve({
-        // skip: externals, // TODO: options.skip was removed in @rollup/plugin-node-resolve 3.0.0
+        // `external` rollup config takes care of marking builtins as externals
+        preferBuiltins: false,
       }),
       // Remove license headers from individual modules
       stripBanner({
@@ -414,7 +414,6 @@ function getPlugins(
           updateBabelOptions,
           bundleType,
           packageName,
-          externals,
           !isProduction,
           bundle
         )
@@ -453,7 +452,8 @@ function getPlugins(
             globalName,
             filename,
             moduleType,
-            bundle.wrapWithModuleBoundaries
+            bundle.wrapWithModuleBoundaries,
+            bundle.wrapWithNodeDevGuard
           );
         },
       },
@@ -689,7 +689,6 @@ async function createBundle(bundle, bundleType) {
     onwarn: handleRollupWarning,
     plugins: getPlugins(
       bundle.entry,
-      externals,
       bundle.babel,
       filename,
       packageName,

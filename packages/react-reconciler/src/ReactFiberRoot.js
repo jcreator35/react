@@ -79,6 +79,9 @@ function FiberRootNode(
   this.pingedLanes = NoLanes;
   this.warmLanes = NoLanes;
   this.expiredLanes = NoLanes;
+  if (enableDefaultTransitionIndicator) {
+    this.indicatorLanes = NoLanes;
+  }
   this.errorRecoveryDisabledLanes = NoLanes;
   this.shellSuspendCounter = 0;
 
@@ -94,6 +97,7 @@ function FiberRootNode(
 
   if (enableDefaultTransitionIndicator) {
     this.onDefaultTransitionIndicator = onDefaultTransitionIndicator;
+    this.pendingIndicator = null;
   }
 
   this.pooledCache = null;
@@ -111,7 +115,6 @@ function FiberRootNode(
 
   if (enableGestureTransition) {
     this.pendingGestures = null;
-    this.stoppingGestures = null;
     this.gestureClone = null;
   }
 
@@ -172,7 +175,7 @@ export function createFiberRoot(
     error: mixed,
     errorInfo: {
       +componentStack?: ?string,
-      +errorBoundary?: ?React$Component<any, any>,
+      +errorBoundary?: ?component(...props: any),
     },
   ) => void,
   onRecoverableError: (
@@ -183,7 +186,7 @@ export function createFiberRoot(
   transitionCallbacks: null | TransitionTracingCallbacks,
 ): FiberRoot {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
-  const root: FiberRoot = (new FiberRootNode(
+  const root: FiberRoot = new FiberRootNode(
     containerInfo,
     tag,
     hydrate,
@@ -193,7 +196,7 @@ export function createFiberRoot(
     onRecoverableError,
     onDefaultTransitionIndicator,
     formState,
-  ): any);
+  ) as any;
   if (enableSuspenseCallback) {
     root.hydrationCallbacks = hydrationCallbacks;
   }

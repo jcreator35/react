@@ -28,6 +28,7 @@ import type {
   TimelineData,
   SchedulingEvent,
   SuspenseEvent,
+  Snapshot,
 } from '../types';
 import {
   REACT_TOTAL_NUM_LANES,
@@ -123,7 +124,7 @@ function updateLaneToLabelMap(
 
 let profilerVersion = null;
 
-function getLastType(stack: $PropertyType<ProcessorState, 'measureStack'>) {
+function getLastType(stack: ProcessorState['measureStack']) {
   if (stack.length > 0) {
     const {type} = stack[stack.length - 1];
     return type;
@@ -131,7 +132,7 @@ function getLastType(stack: $PropertyType<ProcessorState, 'measureStack'>) {
   return null;
 }
 
-function getDepth(stack: $PropertyType<ProcessorState, 'measureStack'>) {
+function getDepth(stack: ProcessorState['measureStack']) {
   if (stack.length > 0) {
     const {depth, type} = stack[stack.length - 1];
     return type === 'render-idle' ? depth : depth + 1;
@@ -170,9 +171,11 @@ function markWorkStarted(
 
   // This array is pre-initialized before processing starts.
   lanes.forEach(lane => {
-    ((currentProfilerData.laneToReactMeasureMap.get(
-      lane,
-    ): any): ReactMeasure[]).push(measure);
+    (
+      currentProfilerData.laneToReactMeasureMap.get(
+        lane,
+      ) as any as Array<ReactMeasure>
+    ).push(measure);
   });
 }
 
@@ -180,7 +183,7 @@ function markWorkCompleted(
   type: ReactMeasureType,
   stopTime: Milliseconds,
   currentProfilerData: TimelineData,
-  stack: $PropertyType<ProcessorState, 'measureStack'>,
+  stack: ProcessorState['measureStack'],
 ) {
   if (stack.length === 0) {
     console.error(
@@ -214,7 +217,7 @@ function markWorkCompleted(
 
 function throwIfIncomplete(
   type: ReactMeasureType,
-  stack: $PropertyType<ProcessorState, 'measureStack'>,
+  stack: ProcessorState['measureStack'],
 ) {
   const lastIndex = stack.length - 1;
   if (lastIndex >= 0) {
@@ -282,10 +285,12 @@ function processEventDispatch(
       warning: null,
     };
 
+    // $FlowFixMe[incompatible-type]
     profilerData.nativeEvents.push(nativeEvent);
 
     // Keep track of curent event in case future ones overlap.
     // We separate them into different vertical lanes in this case.
+    // $FlowFixMe[incompatible-type]
     state.nativeEventStack.push(nativeEvent);
   }
 }
@@ -350,7 +355,7 @@ function processScreenshot(
 ) {
   const encodedSnapshot = event.args.snapshot; // Base 64 encoded
 
-  const snapshot = {
+  const snapshot: Snapshot = {
     height: 0,
     image: null,
     imageSource: `data:image/png;base64,${encodedSnapshot}`,
@@ -359,7 +364,7 @@ function processScreenshot(
   };
 
   // Delay processing until we've extracted snapshot dimensions.
-  let resolveFn = ((null: any): Function);
+  let resolveFn = null as any as Function;
   state.asyncProcessingPromises.push(
     new Promise(resolve => {
       resolveFn = resolve;
@@ -509,7 +514,7 @@ function processTimelineEvent(
       } else if (name.startsWith('--schedule-forced-update-')) {
         const [laneBitmaskString, componentName] = name.slice(25).split('-');
 
-        const forceUpdateEvent = {
+        const forceUpdateEvent: SchedulingEvent = {
           type: 'schedule-force-update',
           lanes: getLanesFromTransportDecimalBitmask(laneBitmaskString),
           componentName,
@@ -527,7 +532,7 @@ function processTimelineEvent(
       } else if (name.startsWith('--schedule-state-update-')) {
         const [laneBitmaskString, componentName] = name.slice(24).split('-');
 
-        const stateUpdateEvent = {
+        const stateUpdateEvent: SchedulingEvent = {
           type: 'schedule-state-update',
           lanes: getLanesFromTransportDecimalBitmask(laneBitmaskString),
           componentName,
@@ -548,7 +553,7 @@ function processTimelineEvent(
         currentProfilerData.thrownErrors.push({
           componentName,
           message,
-          phase: ((phase: any): Phase),
+          phase: phase as any as Phase,
           timestamp: startTime,
           type: 'thrown-error',
         });
@@ -578,12 +583,12 @@ function processTimelineEvent(
         // We can't know if they'll be resolved or not at this point.
         // We'll just give them a default (fake) duration width.
 
-        const suspenseEvent = {
+        const suspenseEvent: SuspenseEvent = {
           componentName,
           depth,
           duration: null,
           id,
-          phase: ((phase: any): Phase),
+          phase: phase as any as Phase,
           promiseName: promiseName || null,
           resolution: 'unresolved',
           timestamp: startTime,
@@ -625,7 +630,7 @@ function processTimelineEvent(
       } else if (name.startsWith('--render-start-')) {
         if (state.nextRenderShouldGenerateNewBatchID) {
           state.nextRenderShouldGenerateNewBatchID = false;
-          state.batchUID = ((state.uidCounter++: any): BatchUID);
+          state.batchUID = state.uidCounter++ as any as BatchUID;
         }
 
         // If this render is the result of a nested update, make a note of it.

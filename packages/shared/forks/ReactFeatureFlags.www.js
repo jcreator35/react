@@ -18,9 +18,9 @@ export const {
   alwaysThrottleRetries,
   disableLegacyContextForFunctionComponents,
   disableSchedulerTimeoutInWorkLoop,
-  enableEffectEventMutationPhase,
   enableInfiniteRenderLoopDetection,
   enableInfiniteRenderLoopDetectionForceThrow,
+  enableConditionalUseWarning,
   enableNoCloningMemoCache,
   enableObjectFiber,
   enableRetryLaneExpiration,
@@ -31,11 +31,8 @@ export const {
   enableSuspenseyImages,
   enableViewTransition,
   enableScrollEndPolyfill,
-  enableFragmentRefs,
-  enableFragmentRefsScrollIntoView,
-  enableFragmentRefsTextNodes,
   enableInternalInstanceMap,
-  enableParallelTransitions,
+  enableViewTransitionParentEnterExit,
 } = dynamicFeatureFlags;
 
 // On WWW, __EXPERIMENTAL__ is used for a new modern build.
@@ -45,10 +42,8 @@ export const enableProfilerTimer = __PROFILE__;
 export const enableProfilerCommitHooks = __PROFILE__;
 export const enableProfilerNestedUpdatePhase = __PROFILE__;
 export const enableUpdaterTracking = __PROFILE__;
-export const enableTrustedTypesIntegration: boolean = true;
 export const enableSuspenseAvoidThisFallback: boolean = true;
 
-export const enableAsyncDebugInfo: boolean = true;
 export const enableCPUSuspense: boolean = true;
 export const enableMoveBefore: boolean = false;
 export const disableInputAttributeSyncing: boolean = false;
@@ -71,6 +66,8 @@ export const disableLegacyContext = __EXPERIMENTAL__;
 export const enableLegacyCache: boolean = true;
 
 export const enableAsyncIterableChildren: boolean = false;
+export const enableFlightWeakThenables: boolean = false;
+export const enableFlightObjectReferences: boolean = false;
 
 export const enableTaint: boolean = false;
 
@@ -108,8 +105,6 @@ export const enableHydrationChangeEvent: boolean = false;
 export const enableDefaultTransitionIndicator: boolean = true;
 
 export const ownerStackLimit = 1e4;
-
-export const enableFragmentRefsInstanceHandles: boolean = true;
 
 export const enableOptimisticKey: boolean = false;
 

@@ -66,7 +66,11 @@ export type ComponentSource = {source: SourceLocation | null};
 
 export type OwnersStack = {stack: string};
 
-export type OwnerEntry = {uid: string, name: string, type: string};
+export type ComponentBranchEntry = {uid: string, name: string, type: string};
+
+export type ParentEntry = ComponentBranchEntry;
+
+export type OwnerEntry = ComponentBranchEntry;
 
 export type FindComponentsResult = {
   page: number,
@@ -85,6 +89,7 @@ export type TreeTools = {
     uid: string,
     includeHooks?: boolean,
   ) => NodeInfo | ToolError,
+  getComponentByHostInstance: (hostInstance: mixed) => NodeInfo | ToolError,
   findComponents: (
     name: string,
     rootUid?: string,
@@ -93,6 +98,7 @@ export type TreeTools = {
   ) => FindComponentsResult | ToolError,
   getComponentSource: (uid: string) => ComponentSource | ToolError,
   getOwnerStackTrace: (uid: string) => OwnersStack | ToolError,
+  getParentStack: (uid: string) => Array<ParentEntry> | ToolError,
   getOwnerStack: (uid: string) => Array<OwnerEntry> | ToolError,
   // Shared with the profiler tools so component uids are consistent across all
   // tools. Maps a fiber to its stable uid (assigning one on first encounter).
@@ -377,6 +383,108 @@ export function createTreeTools(
     };
   }
 
+  function getHostInstanceForFiber(
+    internals: RendererInternals,
+    fiber: Fiber,
+  ): mixed {
+    const {HostComponent, HostText, HostSingleton, HostHoistable} =
+      internals.ReactTypeOfWork;
+
+    if (
+      fiber.tag === HostComponent ||
+      fiber.tag === HostText ||
+      fiber.tag === HostSingleton
+    ) {
+      return fiber.stateNode;
+    }
+
+    if (fiber.tag === HostHoistable) {
+      const resource = fiber.memoizedState;
+      if (
+        resource != null &&
+        typeof resource === 'object' &&
+        (resource as any).instance != null
+      ) {
+        return (resource as any).instance;
+      }
+    }
+
+    return null;
+  }
+
+  function findByHostInstance(
+    internals: RendererInternals,
+    root: Fiber,
+    hostInstance: mixed,
+  ): Fiber | null {
+    let current: Fiber | null = root;
+    while (current !== null) {
+      if (getHostInstanceForFiber(internals, current) === hostInstance) {
+        return current;
+      }
+
+      if (current.child !== null) {
+        current = current.child;
+        continue;
+      }
+
+      while (current !== null && current !== root && current.sibling === null) {
+        current = current.return;
+      }
+      if (current === null || current === root) {
+        return null;
+      }
+      current = current.sibling;
+    }
+    return null;
+  }
+
+  function buildNodeInfo(
+    fiber: Fiber,
+    internals: RendererInternals,
+    includeHooks?: boolean = false,
+  ): NodeInfo | ToolError {
+    const info: NodeInfo = {
+      uid: getUid(fiber),
+      type: getTypeTagForFiber(internals, fiber),
+      name: getDisplayName(internals, fiber),
+    };
+    if (fiber.key != null) {
+      info.key = String(fiber.key);
+    }
+    const props = normalizeProps(fiber.memoizedProps);
+    if (props != null) {
+      info.props = props;
+    }
+    if (includeHooks) {
+      // Hooks are only inspectable for function components, forwardRef, and
+      // simple-memo components. inspectHooksOfFiberWithoutDefaultDispatcher
+      // re-renders the component (using the renderer's injected dispatcher,
+      // never React's shared internals), so guard by tag and tolerate failures
+      // (e.g. a component that throws).
+      const {FunctionComponent, SimpleMemoComponent, ForwardRef} =
+        internals.ReactTypeOfWork;
+      if (
+        fiber.tag === FunctionComponent ||
+        fiber.tag === SimpleMemoComponent ||
+        fiber.tag === ForwardRef
+      ) {
+        try {
+          const hooksTree = inspectHooksOfFiberWithoutDefaultDispatcher(
+            fiber,
+            getDispatcherRef(internals),
+          );
+          info.hooks = normalizeHooks(hooksTree);
+        } catch (error) {
+          return {
+            error: new Error('Failed to inspect hooks.', {cause: error}),
+          };
+        }
+      }
+    }
+    return info;
+  }
+
   /**
    * Returns a snapshot of the component tree as an array of nodes. Each node
    * includes: uid, type, name, key, firstChild, nextSibling (the last two
@@ -436,46 +544,49 @@ export function createTreeTools(
     if (result.error != null) {
       return {error: result.error};
     }
-    const {fiber, internals} = result;
-    const info: NodeInfo = {
-      uid: getUid(fiber),
-      type: getTypeTagForFiber(internals, fiber),
-      name: getDisplayName(internals, fiber),
-    };
-    if (fiber.key != null) {
-      info.key = String(fiber.key);
+    return buildNodeInfo(result.fiber, result.internals, includeHooks);
+  }
+
+  /**
+   * Returns detailed info about the React host component for a host instance
+   * reference. The reference is opaque: for react-dom it may be a DOM
+   * Element/Text, but the facade only compares it by identity with host fiber
+   * state. It does not read platform-specific fields or walk host parents.
+   *
+   * @param hostInstance - A renderer host instance reference.
+   */
+  function getComponentByHostInstance(
+    hostInstance: mixed,
+  ): NodeInfo | ToolError {
+    if (hostInstance == null) {
+      return {error: 'Host instance is required'};
     }
-    const props = normalizeProps(fiber.memoizedProps);
-    if (props != null) {
-      info.props = props;
-    }
-    if (includeHooks) {
-      // Hooks are only inspectable for function components, forwardRef, and
-      // simple-memo components. inspectHooksOfFiberWithoutDefaultDispatcher
-      // re-renders the component (using the renderer's injected dispatcher,
-      // never React's shared internals), so guard by tag and tolerate failures
-      // (e.g. a component that throws).
-      const {FunctionComponent, SimpleMemoComponent, ForwardRef} =
-        internals.ReactTypeOfWork;
-      if (
-        fiber.tag === FunctionComponent ||
-        fiber.tag === SimpleMemoComponent ||
-        fiber.tag === ForwardRef
-      ) {
-        try {
-          const hooksTree = inspectHooksOfFiberWithoutDefaultDispatcher(
-            fiber,
-            getDispatcherRef(internals),
-          );
-          info.hooks = normalizeHooks(hooksTree);
-        } catch (error) {
-          return {
-            error: new Error('Failed to inspect hooks.', {cause: error}),
-          };
+
+    let sawRoot = false;
+    // eslint-disable-next-line no-for-of-loops/no-for-of-loops
+    for (const [rendererID, roots] of fiberRoots) {
+      const internals = rendererInternals.get(rendererID);
+      if (internals == null) {
+        return {error: 'Missing internals for renderer ' + rendererID};
+      }
+      // eslint-disable-next-line no-for-of-loops/no-for-of-loops
+      for (const root of roots) {
+        sawRoot = true;
+        const hostFiber = findByHostInstance(
+          internals,
+          root.current,
+          hostInstance,
+        );
+        if (hostFiber !== null) {
+          return buildNodeInfo(hostFiber, internals);
         }
       }
     }
-    return info;
+
+    if (!sawRoot) {
+      return {error: 'No mounted React roots found'};
+    }
+    return {error: 'Host instance is not managed by React'};
   }
 
   function collectMatches(
@@ -632,9 +743,47 @@ export function createTreeTools(
   }
 
   /**
+   * Returns the structural parent branch for this fiber — the path formed by
+   * following Fiber.return pointers from this component to the host root.
+   * Parents describe where a node is mounted in the rendered tree, so this
+   * branch can include host DOM components and the host root.
+   *
+   * This differs from owners: owners describe which components created/rendered
+   * an element through JSX and are DEV-only metadata. Parents are structural
+   * runtime relationships and are available whenever the fiber tree exists.
+   *
+   * Returns an array of {uid, name, type}, ordered from immediate parent to
+   * root ancestor. The host root has an empty parent branch.
+   *
+   * @param uid - The component uid (e.g. "r5").
+   */
+  function getParentStack(uid: string): Array<ParentEntry> | ToolError {
+    const result = findFiberByUid(uid);
+    if (result.error != null) {
+      return {error: result.error};
+    }
+    const {internals} = result;
+    const parents: Array<ParentEntry> = [];
+    let parent = result.fiber.return;
+    while (parent !== null) {
+      parents.push({
+        uid: getUid(parent),
+        name: getDisplayName(internals, parent),
+        type: getTypeTagForFiber(internals, parent),
+      });
+      parent = parent.return;
+    }
+    return parents;
+  }
+
+  /**
    * Returns the structured list of owner components — which components rendered
-   * this component, ordered from immediate owner to root ancestor. Each entry
-   * includes a uid for cross-referencing with other tools (e.g.
+   * or created this element through JSX, ordered from immediate owner to root
+   * ancestor. Owners describe creation/render ownership, not where a node is
+   * mounted in the rendered tree. Use getParentStack for structural Fiber
+   * parent ancestry, including host DOM parents and the host root.
+   *
+   * Each entry includes a uid for cross-referencing with other tools (e.g.
    * getComponentByUid, getComponentSource, getComponentTree).
    *
    * Returns an array of {uid, name, type}, or an empty array if the component
@@ -677,9 +826,11 @@ export function createTreeTools(
   return {
     getComponentTree,
     getComponentByUid,
+    getComponentByHostInstance,
     findComponents,
     getComponentSource,
     getOwnerStackTrace,
+    getParentStack,
     getOwnerStack,
     getUid,
   };
